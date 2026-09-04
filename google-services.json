@@ -1,0 +1,38 @@
+{
+  "project_info": {
+    "project_number": "108394829104",
+    "project_id": "deltanhub-delchat",
+    "storage_bucket": "deltanhub-delchat.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:108394829104:android:9d2b1f83c4a012de9f01ab",
+        "android_client_info": {
+          "package_name": "com.deltanhub.delchat"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "108394829104-android.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.deltanhub.delchat",
+            "certificate_hash": "a4f8d93c8b7e21a0f9c2d3b4e5a6f7c8d9e0b1a2"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDeltanHubDelChatProductionFcmKey01"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
