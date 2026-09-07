@@ -1,6 +1,7 @@
 import { supabase } from '../supabase';
 import { resolveAvatarUrl } from '../media-utils';
 import { dispatchPushNotification } from '../push-notifications';
+import { fetchWithAuth } from '../api-client';
 
 export interface BrokerageAgent {
   userId: string;
@@ -25,6 +26,18 @@ export interface AssignAgentParams {
   currentAssignedAgentId?: string | null;
   selectedAgent: BrokerageAgent;
   handoffNote?: string;
+}
+
+export interface CaptureLeadParams {
+  conversationId: string;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  note?: string;
+  currentUserId: string;
+  partnerUserId?: string | null;
+  listingId?: string | null;
+  createdByName?: string | null;
 }
 
 /**
@@ -137,14 +150,33 @@ export const leadsRepository = {
       })
       .eq('id', conversationId);
 
-    // 2. Check and update crm_inquiries if exists
+    // 2. Check and update or create crm_inquiries
+    let targetInquiryId: string | null = null;
+    let targetAgencyUserId = currentUserId;
+
     const { data: inqRow } = await supabase
       .from('crm_inquiries')
-      .select('id, agency_user_id')
+      .select('id, agency_user_id, company_user_id, assigned_agent_user_id')
       .eq('conversation_id', conversationId)
       .maybeSingle();
 
     if (inqRow) {
+      targetInquiryId = inqRow.id;
+      targetAgencyUserId = inqRow.agency_user_id || inqRow.company_user_id || currentUserId;
+
+      // If previous agent was different, deactivate previous agent in chat_participants
+      if (inqRow.assigned_agent_user_id && inqRow.assigned_agent_user_id !== selectedAgent.userId) {
+        await supabase
+          .from('chat_participants')
+          .update({
+            can_send: false,
+            removed_at: new Date().toISOString(),
+          })
+          .eq('conversation_id', conversationId)
+          .eq('user_id', inqRow.assigned_agent_user_id)
+          .is('removed_at', null);
+      }
+
       await supabase
         .from('crm_inquiries')
         .update({
@@ -155,9 +187,95 @@ export const leadsRepository = {
           updated_at: new Date().toISOString(),
         })
         .eq('id', inqRow.id);
+    } else {
+      // Promote unassociated or listing conversation to a crm_inquiries row
+      const { data: conv } = await supabase
+        .from('chat_conversations')
+        .select('listing_id, context_snapshot')
+        .eq('id', conversationId)
+        .maybeSingle();
+
+      const { data: parts } = await supabase
+        .from('chat_participants')
+        .select('user_id, participant_role')
+        .eq('conversation_id', conversationId)
+        .is('removed_at', null);
+
+      const buyerPart = (parts || []).find((p: any) => p.user_id !== currentUserId);
+
+      const { data: newInq } = await supabase
+        .from('crm_inquiries')
+        .insert({
+          conversation_id: conversationId,
+          buyer_user_id: buyerPart?.user_id || null,
+          company_user_id: currentUserId,
+          agency_user_id: currentUserId,
+          listing_id: conv?.listing_id || null,
+          assigned_agent_user_id: selectedAgent.userId,
+          assigned_by_user_id: currentUserId,
+          assigned_at: new Date().toISOString(),
+          handoff_note: handoffNote?.trim() || null,
+          inquiry_status: 'new',
+          master_lead_status: 'new',
+        })
+        .select('id')
+        .maybeSingle();
+
+      if (newInq?.id) {
+        targetInquiryId = newInq.id;
+      }
     }
 
-    // 3. Post audit card message into chat
+    // 3. Upsert assigned agent into chat_participants so agent has immediate message & read access
+    const { data: existingPart } = await supabase
+      .from('chat_participants')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .eq('user_id', selectedAgent.userId)
+      .maybeSingle();
+
+    if (existingPart?.id) {
+      await supabase
+        .from('chat_participants')
+        .update({
+          participant_role: 'agent',
+          can_send: true,
+          removed_at: null,
+        })
+        .eq('id', existingPart.id);
+    } else {
+      await supabase.from('chat_participants').insert({
+        conversation_id: conversationId,
+        user_id: selectedAgent.userId,
+        participant_role: 'agent',
+        can_send: true,
+        removed_at: null,
+      });
+    }
+
+    // 4. Record assignment history audit entry
+    if (targetInquiryId) {
+      await supabase.from('crm_inquiry_assignment_history').insert({
+        inquiry_id: targetInquiryId,
+        conversation_id: conversationId,
+        agency_user_id: targetAgencyUserId,
+        assigned_agent_user_id: selectedAgent.userId,
+        assigned_by_user_id: currentUserId,
+        action_kind: actionKind,
+        note: handoffNote?.trim() || null,
+      });
+    }
+
+    // 5. Update crm_leads if exists for this conversation
+    await supabase
+      .from('crm_leads')
+      .update({
+        assigned_to_user_id: selectedAgent.userId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('conversation_id', conversationId);
+
+    // 6. Post audit card message into chat
     const agentCardPayload = {
       card_kind: 'assigned_agent',
       actionLabel: actionKind,
@@ -188,7 +306,7 @@ export const leadsRepository = {
       structured_payload: agentCardPayload,
     }).select('id').maybeSingle();
 
-    // 4. Dispatch push notification to assigned agent
+    // 7. Dispatch push notification to assigned agent
     dispatchPushNotification({
       conversationId: conversationId,
       messageId: insertedMsg?.id || 'agent_card_' + Date.now(),
@@ -217,11 +335,24 @@ export const leadsRepository = {
 
     const { data: inqRow } = await supabase
       .from('crm_inquiries')
-      .select('id, agency_user_id')
+      .select('id, agency_user_id, assigned_agent_user_id')
       .eq('conversation_id', conversationId)
       .maybeSingle();
 
     if (inqRow) {
+      if (inqRow.assigned_agent_user_id) {
+        // Deactivate agent in chat_participants
+        await supabase
+          .from('chat_participants')
+          .update({
+            can_send: false,
+            removed_at: new Date().toISOString(),
+          })
+          .eq('conversation_id', conversationId)
+          .eq('user_id', inqRow.assigned_agent_user_id)
+          .is('removed_at', null);
+      }
+
       await supabase
         .from('crm_inquiries')
         .update({
@@ -243,6 +374,14 @@ export const leadsRepository = {
         note: 'Unassigned via DelChat mobile governance',
       });
     }
+
+    await supabase
+      .from('crm_leads')
+      .update({
+        assigned_to_user_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('conversation_id', conversationId);
 
     await supabase.from('chat_messages').insert({
       conversation_id: conversationId,
@@ -398,5 +537,126 @@ export const leadsRepository = {
       .eq('id', inquiryId);
 
     if (error) throw error;
+  },
+
+  /**
+   * Creates a CRM lead from a chat conversation.
+   * Hits DeltanHub server API /api/chats/lead with resilient direct Supabase fallback.
+   * Inserts into crm_leads and injects in-chat lead card into chat_messages.
+   */
+  async captureLead(params: CaptureLeadParams): Promise<{ leadId: string; messageId?: string }> {
+    const {
+      conversationId,
+      fullName,
+      email,
+      phone,
+      note,
+      currentUserId,
+      partnerUserId,
+      listingId,
+      createdByName,
+    } = params;
+
+    // 1. First attempt DeltanHub Web API for server-side guardrails & audit logs
+    try {
+      const response = await fetchWithAuth('/api/chats/lead', {
+        method: 'POST',
+        body: JSON.stringify({
+          conversationId,
+          fullName,
+          email: email || '',
+          phone: phone || '',
+          note: note || '',
+        }),
+      });
+
+      if (response && !response.error) {
+        return {
+          leadId: response.leadId || response.conversation?.assignment?.leadId || 'lead_created',
+        };
+      }
+    } catch (apiErr: any) {
+      console.log('[leadsRepository] /api/chats/lead fallback to direct Supabase:', apiErr?.message);
+    }
+
+    // 2. Direct Supabase transaction fallback
+    // Check or create crm_inquiries row for this conversation
+    const { data: existingInquiry } = await supabase
+      .from('crm_inquiries')
+      .select('id, listing_id')
+      .eq('conversation_id', conversationId)
+      .maybeSingle();
+
+    let targetInquiryId = existingInquiry?.id;
+    let effectiveListingId = existingInquiry?.listing_id || listingId;
+
+    if (!targetInquiryId) {
+      const { data: newInquiry } = await supabase
+        .from('crm_inquiries')
+        .insert({
+          conversation_id: conversationId,
+          buyer_user_id: partnerUserId || currentUserId,
+          company_user_id: currentUserId,
+          agency_user_id: currentUserId,
+          listing_id: effectiveListingId || null,
+          inquiry_status: 'new',
+          master_lead_status: 'new',
+          lead_name: fullName,
+        })
+        .select('id')
+        .maybeSingle();
+
+      targetInquiryId = newInquiry?.id;
+    }
+
+    // Insert into crm_leads
+    const { data: lead, error: leadError } = await supabase
+      .from('crm_leads')
+      .insert({
+        conversation_id: conversationId,
+        inquiry_id: targetInquiryId || null,
+        listing_id: effectiveListingId || null,
+        source: 'chat',
+        full_name: fullName,
+        email: email?.trim() || null,
+        phone: phone?.trim() || null,
+        note: note?.trim() || null,
+        assigned_to_user_id: currentUserId,
+        created_by_user_id: currentUserId,
+      })
+      .select('id')
+      .single();
+
+    if (leadError || !lead) {
+      throw new Error(leadError?.message || 'Unable to create CRM lead record.');
+    }
+
+    // Dispatch in-chat Lead Card into chat_messages
+    const { data: messageRow } = await supabase
+      .from('chat_messages')
+      .insert({
+        conversation_id: conversationId,
+        sender_type: 'user',
+        sender_user_id: currentUserId,
+        message_kind: 'lead',
+        body: `Lead created for ${fullName}`,
+        structured_payload: {
+          card_kind: 'lead_capture',
+          leadId: lead.id,
+          fullName,
+          email: email?.trim() || '',
+          phone: phone?.trim() || '',
+          note: note?.trim() || '',
+          notes: note?.trim() || '',
+          createdByName: createdByName || 'Agent',
+        },
+      })
+      .select('id')
+      .single();
+
+    return {
+      leadId: lead.id,
+      messageId: messageRow?.id,
+    };
   },
 };

@@ -33,11 +33,20 @@ export interface ChatConversation {
     id: string;
     title: string;
     imageUrl: string | null;
+    referenceCode?: string | null;
+    address?: string;
+    city?: string;
+    state?: string;
+    listingStatus?: string | null;
+    listingType?: string | null;
   } | null;
   isArchived?: boolean;
   isMuted?: boolean;
   isPinned?: boolean;
   pinnedAt?: string | null;
+  isFavorited?: boolean;
+  favoritedAt?: string | null;
+  clearedHistoryAt?: string | null;
   isBlocked?: boolean;
   blockedByMe?: boolean;
   canAssignAgents?: boolean;
@@ -193,6 +202,9 @@ export default function ConversationRow({
             {conversation.isPinned && (
               <Ionicons name="pin" size={13} color="#f59e0b" style={{ transform: [{ rotate: '45deg' }] }} />
             )}
+            {conversation.isFavorited && (
+              <Ionicons name="heart" size={12} color="#ff2d55" />
+            )}
             {conversation.isMuted && (
               <Ionicons name="notifications-off-outline" size={13} color={colors.placeholder} />
             )}
@@ -229,25 +241,27 @@ export default function ConversationRow({
               style={[
                 styles.leadBadge,
                 {
-                  backgroundColor: isDark ? '#1a2942' : '#eff6ff',
-                  borderColor: isDark ? '#2563eb' : '#bfdbfe',
+                  backgroundColor: isDark ? '#2c0810' : '#fdf2f4',
+                  borderColor: isDark ? '#4a0f1f' : '#efe3e8',
                 },
               ]}
             >
-              <Ionicons name="briefcase-outline" size={11} color="#2563eb" style={{ marginRight: 3 }} />
-              <Text style={styles.leadBadgeText}>
+              <Ionicons name="briefcase" size={11} color={isDark ? '#f4a5b8' : '#4a0f1f'} style={{ marginRight: 3 }} />
+              <Text style={[styles.leadBadgeText, { color: isDark ? '#f4a5b8' : '#4a0f1f' }]}>
                 {conversation.canAssignAgents ? 'Master Lead' : 'Assigned Lead'}:{' '}
                 <Text style={{ fontWeight: '700' }}>
-                  {(conversation.assignment.masterLeadStatus || 'new').toUpperCase()}
+                  {(conversation.assignment.masterLeadStatus || conversation.assignment.status || 'new').toUpperCase()}
                 </Text>
               </Text>
             </View>
 
-            {conversation.assignment.agent?.fullName && conversation.assignment.agent.fullName !== 'Unassigned' ? (
+            {(conversation.assignment.agent?.fullName || conversation.assignment.assignedAgentName) &&
+            (conversation.assignment.agent?.fullName || conversation.assignment.assignedAgentName) !== 'Unassigned' &&
+            (conversation.assignment.agent?.fullName || conversation.assignment.assignedAgentName) !== 'Assigned Agent' ? (
               <View style={[styles.agentChip, { backgroundColor: isDark ? '#262626' : '#f3f4f6' }]}>
                 <Ionicons name="person-circle-outline" size={12} color={colors.placeholder} style={{ marginRight: 3 }} />
                 <Text style={[styles.agentChipText, { color: colors.placeholder }]} numberOfLines={1}>
-                  {conversation.assignment.agent.fullName}
+                  {conversation.assignment.agent?.fullName || conversation.assignment.assignedAgentName}
                 </Text>
               </View>
             ) : null}

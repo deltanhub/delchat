@@ -79,8 +79,17 @@ export default function RecentCallsList({
       }, 1000);
     };
 
+    const channelName = `chat-call-logs-${currentUserId}`;
+    // 500k CCU Deduplication Guard: Safely purge any existing channel instance before subscribing
+    const existing = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+    );
+    if (existing) {
+      void supabase.removeChannel(existing);
+    }
+
     const channel = supabase
-      .channel(`chat-call-logs-${currentUserId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {

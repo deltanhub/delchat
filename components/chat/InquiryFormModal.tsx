@@ -8,6 +8,7 @@ import {
   FlatList,
   ActivityIndicator,
   Dimensions,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,40 +42,6 @@ interface InquiryFormModalProps {
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Standard verified real-estate inquiry templates
-const DEFAULT_PRESET_TEMPLATES: SelectedInquiryTemplate[] = [
-  {
-    templateId: 'preset-tour-booking',
-    templateTitle: 'Property Tour Booking Request',
-    fields: [
-      { fieldName: 'preferred_date', fieldLabel: 'Preferred Tour Date', fieldType: 'date', isRequired: true },
-      { fieldName: 'tour_mode', fieldLabel: 'Tour Mode', fieldType: 'select', options: ['In-Person Guided Tour', 'Virtual Video Walkthrough', 'Matterport 3D Review'], isRequired: true },
-      { fieldName: 'attendees_count', fieldLabel: 'Number of Attendees', fieldType: 'number', isRequired: false },
-      { fieldName: 'buyer_notes', fieldLabel: 'Specific Areas of Interest or Questions', fieldType: 'text', isRequired: false },
-    ],
-  },
-  {
-    templateId: 'preset-proof-of-funds',
-    templateTitle: 'Budget & Financing Qualification',
-    fields: [
-      { fieldName: 'max_budget', fieldLabel: 'Target Purchase Budget', fieldType: 'text', isRequired: true },
-      { fieldName: 'financing_type', fieldLabel: 'Financing Method', fieldType: 'select', options: ['Cash Purchase', 'Mortgage / Bank Financing', 'Developer Installment Plan'], isRequired: true },
-      { fieldName: 'timeline', fieldLabel: 'Decision Timeline', fieldType: 'select', options: ['Immediate (0-30 days)', '1 to 3 months', '3 to 6 months', 'Exploratory'], isRequired: true },
-      { fieldName: 'is_preapproved', fieldLabel: 'Mortgage Pre-Approval Secured?', fieldType: 'boolean', isRequired: false },
-    ],
-  },
-  {
-    templateId: 'preset-buyer-preferences',
-    templateTitle: 'Buyer Property Requirements',
-    fields: [
-      { fieldName: 'bedroom_count', fieldLabel: 'Minimum Bedrooms Required', fieldType: 'select', options: ['1 Bedroom', '2 Bedrooms', '3 Bedrooms', '4+ Bedrooms', 'Penthouse / Villa'], isRequired: true },
-      { fieldName: 'preferred_location', fieldLabel: 'Preferred Neighborhood / State', fieldType: 'text', isRequired: true },
-      { fieldName: 'property_usage', fieldLabel: 'Intended Property Use', fieldType: 'select', options: ['Primary Residence', 'Rental Investment / ROI', 'Vacation Home / Short-Let'], isRequired: true },
-      { fieldName: 'parking_needed', fieldLabel: 'Dedicated Parking Required?', fieldType: 'boolean', isRequired: false },
-    ],
-  },
-];
-
 export default function InquiryFormModal({
   visible,
   onClose,
@@ -85,12 +52,15 @@ export default function InquiryFormModal({
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
 
-  const [templates, setTemplates] = useState<SelectedInquiryTemplate[]>(DEFAULT_PRESET_TEMPLATES);
+  const [templates, setTemplates] = useState<SelectedInquiryTemplate[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
     try {
+      // Fetch exclusively from the user's own templates in the database.
+      // RLS on chat_inquiry_templates enforces owner_user_id = auth.uid(),
+      // so this is always scoped to the authenticated publisher's forms only.
       const { data: tmplRows, error } = await supabase
         .from('chat_inquiry_templates')
         .select(`
@@ -102,7 +72,7 @@ export default function InquiryFormModal({
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
-      if (!error && tmplRows && tmplRows.length > 0) {
+      if (!error && tmplRows) {
         const mapped: SelectedInquiryTemplate[] = tmplRows.map((t: any) => ({
           templateId: t.id,
           templateTitle: t.title,
@@ -116,12 +86,12 @@ export default function InquiryFormModal({
               isRequired: f.is_required,
             })),
         }));
-        setTemplates([...mapped, ...DEFAULT_PRESET_TEMPLATES]);
+        setTemplates(mapped);
       } else {
-        setTemplates(DEFAULT_PRESET_TEMPLATES);
+        setTemplates([]);
       }
     } catch {
-      setTemplates(DEFAULT_PRESET_TEMPLATES);
+      setTemplates([]);
     } finally {
       setLoading(false);
     }
@@ -143,8 +113,8 @@ export default function InquiryFormModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable
           style={[
             styles.container,
             {
@@ -152,7 +122,11 @@ export default function InquiryFormModal({
               paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
+          onPress={(e) => e.stopPropagation()}
         >
+          {/* Top Drag Indicator */}
+          <View style={[styles.dragHandle, { backgroundColor: isDark ? '#383848' : '#cbd5e1' }]} />
+
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: isDark ? '#262626' : '#e5e7eb' }]}>
             <View style={{ flex: 1 }}>
@@ -169,6 +143,14 @@ export default function InquiryFormModal({
           {loading ? (
             <View style={styles.centerContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : templates.length === 0 ? (
+            <View style={styles.centerContainer}>
+              <Ionicons name="clipboard-outline" size={44} color={colors.placeholder} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Inquiry Forms Yet</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.placeholder }]}>
+                Create your inquiry templates in the DeltanHub dashboard under{'\n'}Inquiries › Form Builder.
+              </Text>
             </View>
           ) : (
             <FlatList
@@ -187,7 +169,7 @@ export default function InquiryFormModal({
                   ]}
                 >
                   <View style={[styles.iconBox, { backgroundColor: isDark ? '#3a0b18' : colors.primarySoft }]}>
-                    <Ionicons name="clipboard-outline" size={22} color={colors.primary} />
+                    <Ionicons name="clipboard-outline" size={22} color={isDark ? '#f4a5b8' : colors.primary} />
                   </View>
 
                   <View style={styles.cardContent}>
@@ -218,13 +200,13 @@ export default function InquiryFormModal({
               },
             ]}
           >
-            <Ionicons name="shield-checkmark-outline" size={14} color={colors.primary} style={{ marginTop: 1 }} />
+            <Ionicons name="shield-checkmark-outline" size={14} color={isDark ? '#f4a5b8' : colors.primary} style={{ marginTop: 1 }} />
             <Text style={[styles.legalNoticeText, { color: isDark ? '#9ca3af' : '#6b7280' }]}>
               All inquiry templates and questionnaires submitted in chat are exploratory and strictly subject to formal contract & KYC verification under Nigerian Law. Responses do not constitute a binding legal agreement.
             </Text>
           </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -241,11 +223,19 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     overflow: 'hidden',
   },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 12,
     paddingBottom: 14,
     borderBottomWidth: 1,
   },
@@ -266,8 +256,22 @@ const styles = StyleSheet.create({
   },
   centerContainer: {
     paddingVertical: 48,
+    paddingHorizontal: 24,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    lineHeight: 19,
   },
   card: {
     flexDirection: 'row',

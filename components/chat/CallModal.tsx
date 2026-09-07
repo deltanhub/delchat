@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -9,6 +9,8 @@ import {
   Platform,
   StatusBar,
   Dimensions,
+  PanResponder,
+  Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,12 +20,14 @@ import Animated, {
   withRepeat,
   withTiming,
   withSequence,
+  withSpring,
   Easing,
 } from 'react-native-reanimated';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import SafeBlurView from '../SafeBlurView';
 import * as Haptics from '../../lib/haptics';
 import { Typography } from '../../constants/Typography';
+import { proximityService } from '../../lib/voip/proximityService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -42,6 +46,7 @@ export interface CallModalProps {
   remoteIsMuted?: boolean;
   remoteIsVideoOff?: boolean;
   durationSeconds?: number;
+  connectionHealth?: 'connected' | 'reconnecting' | 'failed';
   onAccept?: () => void;
   onDecline?: () => void;
   onEndCall?: () => void;
@@ -49,6 +54,8 @@ export interface CallModalProps {
   onToggleSpeaker?: () => void;
   onToggleVideo?: () => void;
   onSwitchCamera?: () => void;
+  localStream?: any;
+  remoteStream?: any;
 }
 
 export default function CallModal({
@@ -71,18 +78,127 @@ export default function CallModal({
   onToggleSpeaker,
   onToggleVideo,
   onSwitchCamera,
+  localStream,
+  remoteStream,
+  connectionHealth = 'connected',
 }: CallModalProps) {
   const insets = useSafeAreaInsets();
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isSwappedPiP, setIsSwappedPiP] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
+  const [isNearProximity, setIsNearProximity] = useState(false);
 
-  // Pulse animation for avatar ring when ringing
-  const pulseScale = useSharedValue(1);
-  const pulseOpacity = useSharedValue(0.6);
+  useEffect(() => {
+    const unsub = proximityService.subscribe((isNear) => {
+      setIsNearProximity(isNear);
+    });
+    return unsub;
+  }, []);
+
 
   // Camera flip rotation animation
   const flipRotation = useSharedValue(0);
+
+  // Video Controls auto-hide & tap-to-reveal
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsOpacity = useSharedValue(1);
+  const autoHideTimerRef = useRef<any>(null);
+
+  // Draggable PiP translation values
+  const pipTranslateX = useSharedValue(0);
+  const pipTranslateY = useSharedValue(0);
+
+  // Active audio call voice pulse
+  const activeAudioScale = useSharedValue(1);
+  const activeAudioOpacity = useSharedValue(0.4);
+
+  const resetAutoHideTimer = useCallback(() => {
+    if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+    if (callKind === 'video' && phase === 'connected') {
+      autoHideTimerRef.current = setTimeout(() => {
+        controlsOpacity.value = withTiming(0, { duration: 350 });
+        setControlsVisible(false);
+      }, 4000);
+    }
+  }, [callKind, phase]);
+
+  useEffect(() => {
+    if (callKind === 'video' && phase === 'connected') {
+      controlsOpacity.value = 1;
+      setControlsVisible(true);
+      resetAutoHideTimer();
+    }
+    return () => {
+      if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+    };
+  }, [callKind, phase, resetAutoHideTimer]);
+
+  const handleToggleControls = () => {
+    if (controlsVisible) {
+      if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+      controlsOpacity.value = withTiming(0, { duration: 250 });
+      setControlsVisible(false);
+    } else {
+      controlsOpacity.value = withTiming(1, { duration: 250 });
+      setControlsVisible(true);
+      resetAutoHideTimer();
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6;
+      },
+      onPanResponderGrant: () => {
+        resetAutoHideTimer();
+      },
+      onPanResponderMove: (_, gestureState) => {
+        pipTranslateX.value = gestureState.dx;
+        pipTranslateY.value = gestureState.dy;
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        resetAutoHideTimer();
+        const snapX = gestureState.moveX < SCREEN_WIDTH / 2 ? -(SCREEN_WIDTH - 110 - 36) : 0;
+        pipTranslateX.value = withSpring(snapX, {
+          mass: 1,
+          stiffness: 100,
+          damping: 15,
+        });
+        pipTranslateY.value = withSpring(gestureState.dy, {
+          mass: 1,
+          stiffness: 100,
+          damping: 15,
+        });
+      },
+    })
+  ).current;
+
+  // Active audio pulse ring animation
+  useEffect(() => {
+    if (phase === 'connected' && callKind === 'audio') {
+      activeAudioScale.value = withRepeat(
+        withSequence(
+          withTiming(1.15, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+          withTiming(1.0, { duration: 900, easing: Easing.inOut(Easing.ease) })
+        ),
+        -1,
+        true
+      );
+      activeAudioOpacity.value = withRepeat(
+        withSequence(
+          withTiming(0.55, { duration: 1000 }),
+          withTiming(0.18, { duration: 900 })
+        ),
+        -1,
+        true
+      );
+    } else {
+      activeAudioScale.value = 1;
+      activeAudioOpacity.value = 0;
+    }
+  }, [phase, callKind]);
 
   useEffect(() => {
     if (callKind === 'video' && visible && !permission?.granted) {
@@ -90,40 +206,32 @@ export default function CallModal({
     }
   }, [callKind, visible, permission?.granted]);
 
-  useEffect(() => {
-    if (phase === 'outgoing' || phase === 'incoming') {
-      pulseScale.value = withRepeat(
-        withSequence(
-          withTiming(1.24, { duration: 1200, easing: Easing.out(Easing.ease) }),
-          withTiming(1, { duration: 800, easing: Easing.in(Easing.ease) })
-        ),
-        -1,
-        true
-      );
-      pulseOpacity.value = withRepeat(
-        withSequence(
-          withTiming(0.2, { duration: 1200 }),
-          withTiming(0.7, { duration: 800 })
-        ),
-        -1,
-        true
-      );
-    } else {
-      pulseScale.value = 1;
-      pulseOpacity.value = 0;
-    }
-  }, [phase]);
-
-  const animatedRingStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: pulseScale.value }],
-      opacity: pulseOpacity.value,
-    };
-  });
 
   const animatedFlipStyle = useAnimatedStyle(() => {
     return {
       transform: [{ rotateY: `${flipRotation.value}deg` }],
+    };
+  });
+
+  const animatedControlsStyle = useAnimatedStyle(() => {
+    return {
+      opacity: controlsOpacity.value,
+    };
+  });
+
+  const animatedPipPositionStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: pipTranslateX.value },
+        { translateY: pipTranslateY.value },
+      ],
+    };
+  });
+
+  const animatedAudioPulseStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: activeAudioScale.value }],
+      opacity: activeAudioOpacity.value,
     };
   });
 
@@ -164,7 +272,10 @@ export default function CallModal({
             {/* Full-bleed Remote Video Stage */}
             <View style={styles.fullScreenVideoContainer}>
               {/* Remote Video Canvas Backdrop */}
-              <View style={styles.remoteVideoCanvas}>
+              <Pressable
+                style={styles.remoteVideoCanvas}
+                onPress={handleToggleControls}
+              >
                 {partnerAvatarUrl ? (
                   <Image source={{ uri: partnerAvatarUrl }} style={styles.remoteVideoBackdropImage} blurRadius={Platform.OS === 'ios' ? 14 : 8} />
                 ) : (
@@ -197,10 +308,17 @@ export default function CallModal({
                     </View>
                   )}
                 </View>
-              </View>
+              </Pressable>
 
               {/* Floating Top Header Bar */}
-              <View style={[styles.videoHeaderBar, { top: insets.top + 16 }]}>
+              <Animated.View
+                style={[
+                  styles.videoHeaderBar,
+                  { top: insets.top + 16 },
+                  animatedControlsStyle,
+                ]}
+                pointerEvents={controlsVisible ? 'auto' : 'none'}
+              >
                 <View style={styles.videoHeaderPill}>
                   <Ionicons name="lock-closed" size={12} color="#4ade80" style={{ marginRight: 6 }} />
                   <Text style={styles.videoHeaderName} numberOfLines={1}>
@@ -217,56 +335,72 @@ export default function CallModal({
                     {formatDuration(durationSeconds)}
                   </Text>
                 </View>
-              </View>
+              </Animated.View>
 
               {/* Picture-in-Picture (PiP) Floating Live Camera Self View */}
-              <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={handleTogglePiPSwap}
-                style={[styles.pipContainer, { top: insets.top + 70 }]}
+              <Animated.View
+                {...panResponder.panHandlers}
+                style={[
+                  styles.pipContainer,
+                  { top: insets.top + 70 },
+                  animatedPipPositionStyle,
+                ]}
               >
-                <Animated.View style={[styles.pipInner, animatedFlipStyle]}>
-                  {isVideoOff ? (
-                    <View style={styles.pipCameraOffBox}>
-                      <Ionicons name="videocam-off" size={22} color="#ffffff" />
-                      <Text style={styles.pipCameraOffText}>Camera Off</Text>
-                    </View>
-                  ) : permission?.granted ? (
-                    <View style={StyleSheet.absoluteFill}>
-                      <CameraView
-                        style={StyleSheet.absoluteFill}
-                        facing={isFrontCamera ? 'front' : 'back'}
-                      />
-                      <View style={styles.pipSelfTag}>
-                        <Text style={styles.pipSelfTagText}>You ({isFrontCamera ? 'Front' : 'Back'})</Text>
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={handleTogglePiPSwap}
+                  style={StyleSheet.absoluteFill}
+                >
+                  <Animated.View style={[styles.pipInner, animatedFlipStyle]}>
+                    {isVideoOff ? (
+                      <View style={styles.pipCameraOffBox}>
+                        <Ionicons name="videocam-off" size={22} color="#ffffff" />
+                        <Text style={styles.pipCameraOffText}>Camera Off</Text>
                       </View>
-                    </View>
-                  ) : (
-                    <View style={styles.pipLiveBox}>
-                      <View style={styles.pipLiveMockView}>
-                        <Ionicons name="person" size={32} color="#cbd5e1" />
+                    ) : permission?.granted ? (
+                      <View style={StyleSheet.absoluteFill}>
+                        <CameraView
+                          style={StyleSheet.absoluteFill}
+                          facing={isFrontCamera ? 'front' : 'back'}
+                        />
+                        <View style={styles.pipSelfTag}>
+                          <Text style={styles.pipSelfTagText}>You ({isFrontCamera ? 'Front' : 'Back'})</Text>
+                        </View>
                       </View>
-                      <View style={styles.pipSelfTag}>
-                        <Text style={styles.pipSelfTagText}>You ({isFrontCamera ? 'Front' : 'Back'})</Text>
+                    ) : (
+                      <View style={styles.pipLiveBox}>
+                        <View style={styles.pipLiveMockView}>
+                          <Ionicons name="person" size={32} color="#cbd5e1" />
+                        </View>
+                        <View style={styles.pipSelfTag}>
+                          <Text style={styles.pipSelfTagText}>You ({isFrontCamera ? 'Front' : 'Back'})</Text>
+                        </View>
                       </View>
-                    </View>
-                  )}
+                    )}
 
-                  {/* Quick Camera Flip Button inside PiP */}
-                  {!isVideoOff && (
-                    <TouchableOpacity
-                      onPress={handleFlipCamera}
-                      style={styles.pipFlipBtn}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="camera-reverse" size={16} color="#ffffff" />
-                    </TouchableOpacity>
-                  )}
-                </Animated.View>
-              </TouchableOpacity>
+                    {/* Quick Camera Flip Button inside PiP */}
+                    {!isVideoOff && (
+                      <TouchableOpacity
+                        onPress={handleFlipCamera}
+                        style={styles.pipFlipBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="camera-reverse" size={16} color="#ffffff" />
+                      </TouchableOpacity>
+                    )}
+                  </Animated.View>
+                </TouchableOpacity>
+              </Animated.View>
 
               {/* Floating Frosted Glass Bottom Controls Dock */}
-              <View style={[styles.videoControlsDock, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+              <Animated.View
+                style={[
+                  styles.videoControlsDock,
+                  { paddingBottom: Math.max(insets.bottom, 24) },
+                  animatedControlsStyle,
+                ]}
+                pointerEvents={controlsVisible ? 'auto' : 'none'}
+              >
                 <View style={styles.videoControlsPill}>
                   {/* Mute Mic */}
                   <TouchableOpacity
@@ -337,7 +471,7 @@ export default function CallModal({
                     />
                   </TouchableOpacity>
                 </View>
-              </View>
+              </Animated.View>
             </View>
           </View>
         ) : isVideoMode && isOutgoing ? (
@@ -379,10 +513,8 @@ export default function CallModal({
                 </Text>
               </View>
 
-              {/* Center Calling Avatar Stage with Pulse Ring */}
+              {/* Center Calling Avatar Stage */}
               <View style={styles.avatarSection}>
-                <Animated.View style={[styles.pulseRing, animatedRingStyle]} />
-
                 <View style={styles.avatarContainer}>
                   {partnerAvatarUrl ? (
                     <Image source={{ uri: partnerAvatarUrl }} style={styles.avatarImage} />
@@ -490,9 +622,6 @@ export default function CallModal({
               style={StyleSheet.absoluteFill}
             />
 
-            {/* Ambient Dark Wine Glow Effect */}
-            <View style={styles.ambientGlow} />
-
             <View style={[styles.contentContainer, { paddingTop: insets.top + 32, paddingBottom: insets.bottom + 32 }]}>
               {/* Header Section */}
               <View style={styles.headerSection}>
@@ -517,6 +646,20 @@ export default function CallModal({
                   {phase === 'ended' && `Call Ended (${formatDuration(durationSeconds)})`}
                 </Text>
 
+                {phase === 'connected' && (
+                  connectionHealth === 'reconnecting' ? (
+                    <View style={styles.reconnectingBadge}>
+                      <Ionicons name="sync-outline" size={13} color="#f59e0b" style={{ marginRight: 5 }} />
+                      <Text style={styles.reconnectingText}>Reconnecting · Handover in progress</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.liveAudioBadge}>
+                      <View style={styles.liveAudioGreenDot} />
+                      <Text style={styles.liveAudioText}>Voice Connected · Encrypted</Text>
+                    </View>
+                  )
+                )}
+
                 {phase === 'connected' && remoteIsMuted && (
                   <View style={styles.audioPartnerMutePill}>
                     <Ionicons name="mic-off" size={13} color="#f87171" style={{ marginRight: 5 }} />
@@ -527,8 +670,8 @@ export default function CallModal({
 
               {/* Center Avatar Section */}
               <View style={styles.avatarSection}>
-                {(phase === 'outgoing' || phase === 'incoming') && (
-                  <Animated.View style={[styles.pulseRing, animatedRingStyle]} />
+                {phase === 'connected' && (
+                  <Animated.View style={[styles.activeAudioPulseRing, animatedAudioPulseStyle]} />
                 )}
 
                 <View style={styles.avatarContainer}>
@@ -674,6 +817,14 @@ export default function CallModal({
             </View>
           </View>
         )}
+
+        {/* Proximity Earpiece Blanking Shield */}
+        {isNearProximity && callKind === 'audio' && !isSpeakerOn && (
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000000', zIndex: 99999 }]}
+            pointerEvents="auto"
+          />
+        )}
       </View>
     </Modal>
   );
@@ -683,15 +834,6 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(9, 13, 20, 0.98)',
-  },
-  ambientGlow: {
-    position: 'absolute',
-    top: '25%',
-    left: '20%',
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: 'rgba(74, 15, 31, 0.35)',
   },
   contentContainer: {
     flex: 1,
@@ -744,27 +886,11 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginVertical: 20,
   },
-  pulseRing: {
-    position: 'absolute',
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    borderWidth: 2,
-    borderColor: '#4A0F1F',
-    backgroundColor: 'rgba(74, 15, 31, 0.25)',
-  },
   avatarContainer: {
     width: 128,
     height: 128,
     borderRadius: 64,
-    borderWidth: 3,
-    borderColor: '#4A0F1F',
     position: 'relative',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
-    elevation: 8,
   },
   avatarImage: {
     width: '100%',
@@ -1153,4 +1279,56 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontFamily: Typography.fontFamily,
   },
+  activeAudioPulseRing: {
+    position: 'absolute',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 2,
+    borderColor: '#10b981',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  liveAudioBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 0.5,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  liveAudioGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  liveAudioText: {
+    color: '#86efac',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+  },
+  reconnectingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 0.5,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+  },
+  reconnectingText: {
+    color: '#fcd34d',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+  },
 });
+

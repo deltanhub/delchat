@@ -408,7 +408,7 @@ export default function ComposeScreen() {
 
               {/* Footer action button for Group Mode */}
               {mode === 'group' && selectedContacts.length > 0 && (
-                <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: insets.bottom + 12 }]}>
+                <View style={[styles.footer, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: insets.bottom + 12 }]}>
                   <ScalePressable
                     onPress={() => {
                       try {
@@ -669,7 +669,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#ffffff',
     borderTopWidth: 1,
     paddingHorizontal: 16,
     paddingTop: 12,

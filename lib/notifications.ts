@@ -34,7 +34,16 @@ export enum SafeAndroidImportance {
   MAX = 7,
 }
 
+export enum SafeAndroidNotificationVisibility {
+  UNKNOWN = 0,
+  PUBLIC = 1,
+  PRIVATE = 2,
+  SECRET = 3,
+}
+
 const fallbackNotifications = {
+  AndroidImportance: SafeAndroidImportance,
+  AndroidNotificationVisibility: SafeAndroidNotificationVisibility,
   setNotificationHandler: (_handler: any) => {
     // No-op in Android Expo Go
   },
@@ -73,7 +82,6 @@ const fallbackNotifications = {
     );
     return { data: '', type: 'expo' };
   },
-  AndroidImportance: SafeAndroidImportance,
 };
 
 const targetObj = (rawNotificationsModule || fallbackNotifications) as unknown as object;
@@ -98,6 +106,9 @@ export const Notifications: typeof ExpoNotificationsType = new Proxy(
       }
       if (prop === 'AndroidImportance') {
         return SafeAndroidImportance;
+      }
+      if (prop === 'AndroidNotificationVisibility') {
+        return SafeAndroidNotificationVisibility;
       }
       return (...args: unknown[]) => {
         console.warn(

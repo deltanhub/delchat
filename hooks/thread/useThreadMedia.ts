@@ -1,16 +1,18 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from '../../lib/supabase';
 import { uploadLocalFileToSupabaseStorage } from '../../lib/media-utils';
 import { dispatchPushNotification } from '../../lib/push-notifications';
+import { broadcastInboxAlert } from '../../lib/sync-coordinator';
 import OfflineEngine from '../../lib/offline-engine';
 import * as Haptics from '../../lib/haptics';
 
 export interface UseThreadMediaParams {
   conversationId: string;
   currentUser: any;
+  partnerUserId?: string | null;
   ensureParticipantAuthorization: () => Promise<boolean>;
   onMediaSent?: () => void;
   onAddOptimisticMessage?: (msg: any) => void;
@@ -21,12 +23,16 @@ export interface UseThreadMediaParams {
 export function useThreadMedia({
   conversationId,
   currentUser,
+  partnerUserId,
   ensureParticipantAuthorization,
   onMediaSent,
   onAddOptimisticMessage,
   onUpdateOptimisticMessage,
   onRemoveOptimisticMessage,
 }: UseThreadMediaParams) {
+  // Concurrency guard to prevent iOS PickingInProgressException collisions
+  const isPickingActiveRef = useRef(false);
+
   // Staged media state for preview modal
   const [stagedMediaAssets, setStagedMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
@@ -60,6 +66,8 @@ export function useThreadMedia({
 
   // Pick photos / videos from gallery
   const handlePickMedia = useCallback(async () => {
+    if (isPickingActiveRef.current) return;
+    isPickingActiveRef.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -77,12 +85,20 @@ export function useThreadMedia({
         setMediaPreviewVisible(true);
       }
     } catch (err: any) {
-      Alert.alert('Media Error', err.message);
+      const msg = err?.message || String(err);
+      if (msg.includes('cancelled') || msg.includes('canceled')) return;
+      Alert.alert('Media Error', msg);
+    } finally {
+      setTimeout(() => {
+        isPickingActiveRef.current = false;
+      }, 400);
     }
   }, []);
 
   // Capture photo / video using camera
   const handleLaunchCamera = useCallback(async () => {
+    if (isPickingActiveRef.current) return;
+    isPickingActiveRef.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -98,7 +114,13 @@ export function useThreadMedia({
         setMediaPreviewVisible(true);
       }
     } catch (err: any) {
-      Alert.alert('Camera Error', err.message);
+      const msg = err?.message || String(err);
+      if (msg.includes('cancelled') || msg.includes('canceled')) return;
+      Alert.alert('Camera Error', msg);
+    } finally {
+      setTimeout(() => {
+        isPickingActiveRef.current = false;
+      }, 400);
     }
   }, []);
 
@@ -177,15 +199,23 @@ export function useThreadMedia({
           messageKind: 'attachments',
         });
 
+        broadcastInboxAlert({
+          recipientUserId: partnerUserId,
+          conversationId,
+          senderUserId: currentUser.id,
+        });
+
         if (onMediaSent) onMediaSent();
       }
     } catch (e: any) {
       Alert.alert('Document Error', e.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, onMediaSent]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, onMediaSent]);
 
   // Pick document from filesystem
   const handlePickDocument = useCallback(async () => {
+    if (isPickingActiveRef.current) return;
+    isPickingActiveRef.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const docRes = await DocumentPicker.getDocumentAsync({
@@ -197,7 +227,21 @@ export function useThreadMedia({
         await handleSendDocument(doc);
       }
     } catch (err: any) {
-      Alert.alert('Document Error', err.message);
+      const msg = err?.message || String(err);
+      if (
+        msg.includes('Different document picking in progress') ||
+        msg.includes('PickingInProgressException') ||
+        msg.includes('User canceled') ||
+        msg.includes('cancelled') ||
+        msg.includes('canceled')
+      ) {
+        return;
+      }
+      Alert.alert('Document Error', msg);
+    } finally {
+      setTimeout(() => {
+        isPickingActiveRef.current = false;
+      }, 400);
     }
   }, [handleSendDocument]);
 
@@ -276,6 +320,12 @@ export function useThreadMedia({
             senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
             messageKind: 'attachments',
           });
+
+          broadcastInboxAlert({
+            recipientUserId: partnerUserId,
+            conversationId,
+            senderUserId: currentUser.id,
+          });
         }
       }
       setMediaPreviewVisible(false);
@@ -286,7 +336,7 @@ export function useThreadMedia({
     } finally {
       setIsUploadingMedia(false);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, onMediaSent]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, onMediaSent]);
 
   // Send voice note
   const handleSendVoiceNote = useCallback(async (duration: number, audioUri?: string) => {
@@ -385,6 +435,13 @@ export function useThreadMedia({
           senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
           messageKind: 'voice_note',
         });
+
+        broadcastInboxAlert({
+          recipientUserId: partnerUserId,
+          conversationId,
+          senderUserId: currentUser.id,
+        });
+
         if (onMediaSent) onMediaSent();
       }
     } catch (err: any) {
@@ -407,7 +464,7 @@ export function useThreadMedia({
         error: err?.message,
       });
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, onAddOptimisticMessage, onUpdateOptimisticMessage, onRemoveOptimisticMessage, onMediaSent]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, onAddOptimisticMessage, onUpdateOptimisticMessage, onRemoveOptimisticMessage, onMediaSent]);
 
   return {
     stagedMediaAssets,

@@ -206,6 +206,12 @@ export default function IncomingCallHUD() {
         void supabase.removeChannel(activeSessionChannelRef.current);
       }
       const syncChannelName = 'call-status-listener-' + callData.callId;
+      const existingSync = supabase.getChannels().find(
+        (ch) => ch.topic === `realtime:${syncChannelName}` || (ch as any).subTopic === syncChannelName
+      );
+      if (existingSync) {
+        void supabase.removeChannel(existingSync);
+      }
       activeSessionChannelRef.current = supabase
         .channel(syncChannelName)
         .on(
@@ -238,6 +244,12 @@ export default function IncomingCallHUD() {
 
     // Targeted user-scoped channel: eliminates global 500k CCU broadcast storms
     const channelName = 'user-call-listener-' + currentUser.id;
+    const existing = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+    );
+    if (existing) {
+      void supabase.removeChannel(existing);
+    }
     const userCallChannel = supabase
       .channel(channelName)
       // 1. Zero-DB-load Realtime Broadcast from caller
@@ -385,16 +397,22 @@ export default function IncomingCallHUD() {
             <View style={styles.actionRow}>
               <ScalePressable
                 onPress={handleDecline}
+                accessibilityRole="button"
+                accessibilityLabel="Decline Call"
+                accessibilityHint="Declines the incoming call"
                 style={[styles.actionBtn, styles.declineBtn]}
               >
-                <Ionicons name="call" size={18} color="#ffffff" style={{ transform: [{ rotate: '135deg' }] }} />
+                <Ionicons name="call" size={22} color="#ffffff" style={{ transform: [{ rotate: '135deg' }] }} />
               </ScalePressable>
 
               <ScalePressable
                 onPress={handleAccept}
+                accessibilityRole="button"
+                accessibilityLabel={isVideo ? 'Accept Video Call' : 'Accept Voice Call'}
+                accessibilityHint="Answers and connects the incoming call"
                 style={[styles.actionBtn, styles.acceptBtn]}
               >
-                <Ionicons name={isVideo ? 'videocam' : 'call'} size={18} color="#ffffff" />
+                <Ionicons name={isVideo ? 'videocam' : 'call'} size={22} color="#ffffff" />
               </ScalePressable>
             </View>
           </View>
@@ -429,7 +447,7 @@ const styles = StyleSheet.create({
   },
   blurCard: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   cardContent: {
     flexDirection: 'row',
@@ -489,14 +507,19 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   actionBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   declineBtn: {
     backgroundColor: '#ef4444',

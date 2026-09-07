@@ -7,7 +7,7 @@ import type { SelectedListing } from '../../components/chat/PropertyCatalogModal
 import type { SelectedInquiryTemplate } from '../../components/chat/InquiryFormModal';
 import { dispatchPushNotification } from '../../lib/push-notifications';
 import OfflineEngine from '../../lib/offline-engine';
-import SyncCoordinator from '../../lib/sync-coordinator';
+import SyncCoordinator, { broadcastInboxAlert } from '../../lib/sync-coordinator';
 import {
   getCachedMessages,
   setCachedMessages,
@@ -21,6 +21,7 @@ export interface UseThreadMessagesParams {
   conversationId: string;
   currentUser: any;
   partnerName?: string;
+  partnerUserId?: string | null;
   ensureParticipantAuthorization: () => Promise<boolean>;
   clearPartnerTyping: () => void;
   sendTyping: (isTyping: boolean) => void;
@@ -30,12 +31,18 @@ export function useThreadMessages({
   conversationId,
   currentUser,
   partnerName,
+  partnerUserId,
   ensureParticipantAuthorization,
   clearPartnerTyping,
   sendTyping,
 }: UseThreadMessagesParams) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    OfflineEngine.getMessagesSync(conversationId)
+  );
+  const [loadingMessages, setLoadingMessages] = useState<boolean>(() => {
+    const cached = OfflineEngine.getMessagesSync(conversationId);
+    return cached.length === 0;
+  });
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [rateLimitCooldown, setRateLimitCooldown] = useState(false);
@@ -58,10 +65,13 @@ export function useThreadMessages({
     setMessages((prev) => prev.filter((m) => m.id !== tempId));
   }, []);
 
-  // Fetch messages using messageRepository
+  // Fetch messages using messageRepository (Stale-While-Revalidate pattern)
   const fetchMessages = useCallback(async () => {
     if (!conversationId || !currentUser) return;
-    setLoadingMessages(true);
+    // Only engage loading spinner if there are zero messages on screen
+    if (OfflineEngine.getMessagesSync(conversationId).length === 0 && messages.length === 0) {
+      setLoadingMessages(true);
+    }
     try {
       const { data: participantsData } = await supabase
         .from('chat_participants')
@@ -78,7 +88,16 @@ export function useThreadMessages({
         partnerLastReadTime,
       });
 
-      setMessages(result.messages);
+      setMessages((prev) => {
+        // Retain any pending/optimistic messages that haven't yet been confirmed by server
+        const pendingOptimistic = prev.filter((m) => m.status === 'sending');
+        if (pendingOptimistic.length === 0) {
+          return result.messages;
+        }
+        const serverIds = new Set(result.messages.map((m) => m.id));
+        const activePending = pendingOptimistic.filter((m) => !serverIds.has(m.id));
+        return [...activePending, ...result.messages];
+      });
       setHasMoreMessages(result.hasMore);
       setStarredMsgIds(result.starredMsgIds);
 
@@ -153,14 +172,15 @@ export function useThreadMessages({
   useEffect(() => {
     if (currentUser && conversationId) {
       OfflineEngine.getMessages(conversationId).then((richCached) => {
-        if (richCached && richCached.length > 0 && messages.length === 0) {
-          setMessages(richCached);
+        if (richCached && richCached.length > 0) {
+          setMessages((prev) => (prev.length === 0 ? richCached : prev));
           setLoadingMessages(false);
         } else {
           getCachedMessages(conversationId).then((cached) => {
-            if (cached && cached.length > 0 && messages.length === 0) {
-              setMessages(
-                cached.map((c) => ({
+            if (cached && cached.length > 0) {
+              setMessages((prev) => {
+                if (prev.length > 0) return prev;
+                return cached.map((c) => ({
                   id: c.id,
                   senderType: 'user',
                   senderUserId: c.senderUserId,
@@ -174,8 +194,8 @@ export function useThreadMessages({
                   attachments: [],
                   reactions: {},
                   structuredPayload: {},
-                }))
-              );
+                }));
+              });
               setLoadingMessages(false);
             }
           });
@@ -205,11 +225,16 @@ export function useThreadMessages({
         await removePendingMessage(conversationId, tempId);
         await OfflineEngine.removeOutbox(tempId);
         await OfflineEngine.updateMessageStatus(conversationId, tempId, data.id, 'sent', data.createdAt);
+        broadcastInboxAlert({
+          recipientUserId: partnerUserId,
+          conversationId,
+          senderUserId: currentUser.id,
+        });
       }
     } catch (retryErr: any) {
       console.warn('Pending message retry deferred:', retryErr?.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization]);
 
   // Flush offline pending queue
   const flushPendingQueue = useCallback(async () => {
@@ -246,8 +271,16 @@ export function useThreadMessages({
   useEffect(() => {
     if (!conversationId || !currentUser) return;
 
+    const channelName = `chat-thread-realtime-${conversationId}`;
+    const existing = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+    );
+    if (existing) {
+      void supabase.removeChannel(existing);
+    }
+
     const msgChannel = supabase
-      .channel(`chat-thread-realtime-${conversationId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
@@ -294,38 +327,41 @@ export function useThreadMessages({
               );
 
               if (matchingOptimistic) {
+                const confirmedMsg: ChatMessage = {
+                  ...matchingOptimistic,
+                  id: newMsg.id,
+                  status: 'sent',
+                  sentAt: newMsg.created_at,
+                  attachments: matchingOptimistic.attachments && matchingOptimistic.attachments.length > 0 ? matchingOptimistic.attachments : initialAttachments,
+                };
+                OfflineEngine.saveSingleMessage(conversationId, confirmedMsg);
                 return prev.map((m) =>
-                  m.id === matchingOptimistic.id
-                    ? {
-                        ...m,
-                        id: newMsg.id,
-                        status: 'sent',
-                        sentAt: newMsg.created_at,
-                        attachments: m.attachments && m.attachments.length > 0 ? m.attachments : initialAttachments,
-                      }
-                    : m
+                  m.id === matchingOptimistic.id ? confirmedMsg : m
                 );
               }
 
+              const outgoingMsg: ChatMessage = {
+                id: newMsg.id,
+                senderType: newMsg.sender_type || 'user',
+                senderUserId: newMsg.sender_user_id,
+                authorName: 'You',
+                authorRoleLabel: 'You',
+                status: 'sent',
+                messageKind: newMsg.message_kind || 'text',
+                body: newMsg.body || '',
+                sentAt: newMsg.created_at,
+                intent: newMsg.intent,
+                attachments: initialAttachments,
+                listingCard: newMsg.structured_payload?.listingCard || null,
+                inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
+                inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
+                reactions: newMsg.reactions || newMsg.structured_payload?.reactions || {},
+                structuredPayload: newMsg.structured_payload || {},
+              };
+              OfflineEngine.saveSingleMessage(conversationId, outgoingMsg);
+
               return [
-                {
-                  id: newMsg.id,
-                  senderType: newMsg.sender_type || 'user',
-                  senderUserId: newMsg.sender_user_id,
-                  authorName: 'You',
-                  authorRoleLabel: 'You',
-                  status: 'sent',
-                  messageKind: newMsg.message_kind || 'text',
-                  body: newMsg.body || '',
-                  sentAt: newMsg.created_at,
-                  intent: newMsg.intent,
-                  attachments: initialAttachments,
-                  listingCard: newMsg.structured_payload?.listingCard || null,
-                  inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
-                  inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
-                  reactions: newMsg.structured_payload?.reactions || {},
-                  structuredPayload: newMsg.structured_payload || {},
-                },
+                outgoingMsg,
                 ...prev,
               ];
             });
@@ -339,25 +375,29 @@ export function useThreadMessages({
             p_conversation_id: conversationId,
           });
 
+          const incomingMsg: ChatMessage = {
+            id: newMsg.id,
+            senderType: newMsg.sender_type || 'user',
+            senderUserId: newMsg.sender_user_id,
+            authorName: partnerName || 'Partner',
+            authorRoleLabel: 'Seller',
+            status: 'delivered',
+            messageKind: newMsg.message_kind || 'text',
+            body: newMsg.body || '',
+            sentAt: newMsg.created_at,
+            intent: newMsg.intent,
+            attachments: initialAttachments,
+            listingCard: newMsg.structured_payload?.listingCard || null,
+            inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
+            inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
+            reactions: newMsg.reactions || newMsg.structured_payload?.reactions || {},
+            structuredPayload: newMsg.structured_payload || {},
+          };
+
+          OfflineEngine.saveSingleMessage(conversationId, incomingMsg);
+
           setMessages((prev) => [
-            {
-              id: newMsg.id,
-              senderType: newMsg.sender_type || 'user',
-              senderUserId: newMsg.sender_user_id,
-              authorName: partnerName || 'Partner',
-              authorRoleLabel: 'Seller',
-              status: 'delivered',
-              messageKind: newMsg.message_kind || 'text',
-              body: newMsg.body || '',
-              sentAt: newMsg.created_at,
-              intent: newMsg.intent,
-              attachments: initialAttachments,
-              listingCard: newMsg.structured_payload?.listingCard || null,
-              inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
-              inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
-              reactions: newMsg.structured_payload?.reactions || {},
-              structuredPayload: newMsg.structured_payload || {},
-            },
+            incomingMsg,
             ...prev.filter((m) => m.id !== newMsg.id),
           ]);
 
@@ -429,7 +469,7 @@ export function useThreadMessages({
                   readAt: updated.read_at || m.readAt,
                   deliveredAt: updated.delivered_at || m.deliveredAt,
                   body: updated.body || m.body,
-                  reactions: updated.structured_payload?.reactions || m.reactions,
+                  reactions: updated.reactions !== undefined ? (updated.reactions || {}) : (updated.structured_payload?.reactions || m.reactions),
                 };
               }
               return m;
@@ -551,6 +591,11 @@ export function useThreadMessages({
           senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
           messageKind: 'text',
         });
+        broadcastInboxAlert({
+          recipientUserId: partnerUserId,
+          conversationId,
+          senderUserId: currentUser.id,
+        });
       }
     } catch (err: any) {
       const errMsg = (err.message || '').toLowerCase();
@@ -627,7 +672,7 @@ export function useThreadMessages({
         });
       }
     }
-  }, [composerText, conversationId, currentUser, replyingToMessage, sendTyping, ensureParticipantAuthorization, retryPendingMessage]);
+  }, [composerText, conversationId, currentUser, partnerUserId, replyingToMessage, sendTyping, ensureParticipantAuthorization, retryPendingMessage]);
 
   // Send property catalog listing
   const handleSendCatalogListing = useCallback(async (listing: SelectedListing) => {
@@ -647,11 +692,16 @@ export function useThreadMessages({
           listingStatus: listing.listingStatus,
         },
       });
+      broadcastInboxAlert({
+        recipientUserId: partnerUserId,
+        conversationId,
+        senderUserId: currentUser.id,
+      });
       fetchMessages();
     } catch (e: any) {
       Alert.alert('Catalog Error', e.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, fetchMessages]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, fetchMessages]);
 
   // Send inquiry form questionnaire
   const handleSendInquiryTemplate = useCallback(async (tmpl: SelectedInquiryTemplate) => {
@@ -672,11 +722,16 @@ export function useThreadMessages({
           options: f.options,
         })),
       });
+      broadcastInboxAlert({
+        recipientUserId: partnerUserId,
+        conversationId,
+        senderUserId: currentUser.id,
+      });
       fetchMessages();
     } catch (e: any) {
       Alert.alert('Inquiry Form Error', e.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, fetchMessages]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, fetchMessages]);
 
   // Send embed URL
   const handleSendEmbed = useCallback(async (embedUrl: string) => {
@@ -689,11 +744,16 @@ export function useThreadMessages({
         embedUrl,
         title: '3D Virtual Tour',
       });
+      broadcastInboxAlert({
+        recipientUserId: partnerUserId,
+        conversationId,
+        senderUserId: currentUser.id,
+      });
       fetchMessages();
     } catch (e: any) {
       Alert.alert('Embed Error', e.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, fetchMessages]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, fetchMessages]);
 
   // Send inquiry form questionnaire answers
   const handleSendInquiryResponse = useCallback(async (answers: Record<string, any>) => {
@@ -705,11 +765,16 @@ export function useThreadMessages({
         senderUserId: currentUser.id,
         answers,
       });
+      broadcastInboxAlert({
+        recipientUserId: partnerUserId,
+        conversationId,
+        senderUserId: currentUser.id,
+      });
       fetchMessages();
     } catch (e: any) {
       Alert.alert('Inquiry Response Error', e.message);
     }
-  }, [conversationId, currentUser, ensureParticipantAuthorization, fetchMessages]);
+  }, [conversationId, currentUser, partnerUserId, ensureParticipantAuthorization, fetchMessages]);
 
   // Reactions
   const handleReactToMessage = useCallback(async (messageId: string, emoji: string) => {

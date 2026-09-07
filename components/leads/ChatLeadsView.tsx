@@ -48,15 +48,29 @@ export default function ChatLeadsView({
   const [chatSubTab, setChatSubTab] = useState<'master' | 'my'>('master');
   const [chatFilterStatus, setChatFilterStatus] = useState<string>('all');
 
+  const masterLeadsCount = useMemo(() => {
+    return chatLeads.filter(
+      (l) => Boolean(l.assignedToUserId) && l.assignedToUserId !== currentUser?.id
+    ).length;
+  }, [chatLeads, currentUser?.id]);
+
+  const myLeadsCount = useMemo(() => {
+    return chatLeads.filter(
+      (l) => !l.assignedToUserId || l.assignedToUserId === currentUser?.id
+    ).length;
+  }, [chatLeads, currentUser?.id]);
+
   const partitionedChatLeads = useMemo(() => {
     if (!isAgencyOrDev) return chatLeads;
     if (chatSubTab === 'master') {
+      // Master Leads = Company leads delegated to an assigned agent
       return chatLeads.filter(
-        (l) => l.assignedToUserId !== currentUser?.id && l.createdByUserId !== currentUser?.id
+        (l) => Boolean(l.assignedToUserId) && l.assignedToUserId !== currentUser?.id
       );
     } else {
+      // My Leads = Leads handled directly by the agency user or unassigned leads
       return chatLeads.filter(
-        (l) => l.assignedToUserId === currentUser?.id || l.createdByUserId === currentUser?.id
+        (l) => !l.assignedToUserId || l.assignedToUserId === currentUser?.id
       );
     }
   }, [chatLeads, chatSubTab, isAgencyOrDev, currentUser?.id]);
@@ -90,13 +104,7 @@ export default function ChatLeadsView({
                 },
               ]}
             >
-              Master Leads (
-              {
-                chatLeads.filter(
-                  (l) => l.assignedToUserId !== currentUser?.id && l.createdByUserId !== currentUser?.id
-                ).length
-              }
-              )
+              Master Leads ({masterLeadsCount})
             </Text>
           </TouchableOpacity>
 
@@ -119,13 +127,7 @@ export default function ChatLeadsView({
                 },
               ]}
             >
-              My Leads (
-              {
-                chatLeads.filter(
-                  (l) => l.assignedToUserId === currentUser?.id || l.createdByUserId === currentUser?.id
-                ).length
-              }
-              )
+              My Leads ({myLeadsCount})
             </Text>
           </TouchableOpacity>
         </View>
@@ -196,10 +198,50 @@ export default function ChatLeadsView({
                           {statusMeta.label.toUpperCase()}
                         </Text>
                       </View>
+                      {item.assignedToUserId && item.assignedToUserId !== currentUser?.id ? (
+                        <View style={[styles.masterLeadBadge, { backgroundColor: isDark ? '#2c0810' : '#fdf2f4', borderColor: isDark ? '#4a0f1f' : '#efe3e8' }]}>
+                          <Ionicons name="briefcase" size={10} color={isDark ? '#f4e7eb' : '#4a0f1f'} style={{ marginRight: 3 }} />
+                          <Text style={[styles.masterLeadBadgeText, { color: isDark ? '#f4e7eb' : '#4a0f1f' }]}>
+                            MASTER LEAD
+                          </Text>
+                        </View>
+                      ) : !item.assignedToUserId ? (
+                        <View style={[styles.unassignedBadge, { backgroundColor: isDark ? '#2d1f05' : '#fffbeb', borderColor: isDark ? '#78350f' : '#fde68a' }]}>
+                          <Ionicons name="alert-circle" size={10} color="#d97706" style={{ marginRight: 3 }} />
+                          <Text style={[styles.unassignedBadgeText, { color: '#d97706' }]}>UNASSIGNED</Text>
+                        </View>
+                      ) : (
+                        <View style={[styles.selfAssignedBadge, { backgroundColor: isDark ? '#064e3b' : '#ecfdf5', borderColor: isDark ? '#047857' : '#a7f3d0' }]}>
+                          <Ionicons name="shield-checkmark" size={10} color="#059669" style={{ marginRight: 3 }} />
+                          <Text style={[styles.selfAssignedBadgeText, { color: '#059669' }]}>ASSIGNED TO YOU</Text>
+                        </View>
+                      )}
                       <View style={[styles.sourcePill, { backgroundColor: isDark ? '#3d1624' : '#fcedf2' }]}>
                         <Text style={[styles.sourcePillText, { color: colors.primary }]}>FROM CHAT</Text>
                       </View>
                     </View>
+
+                    {item.assignedAgentName && item.assignedAgentName !== 'Unassigned' && (
+                      <View style={[styles.assignedAgentChip, { backgroundColor: isDark ? '#262626' : '#f3f4f6' }]}>
+                        <View style={[styles.agentInitialsCircle, { backgroundColor: colors.primary }]}>
+                          <Text style={styles.agentInitialsText}>
+                            {item.assignedAgentName.substring(0, 2).toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={[styles.assignedAgentName, { color: colors.text }]} numberOfLines={1}>
+                          Agent: {item.assignedAgentName}
+                        </Text>
+                      </View>
+                    )}
+
+                    {item.listingTitle && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <Ionicons name="business-outline" size={12} color={colors.placeholder} style={{ marginRight: 4 }} />
+                        <Text style={[styles.listingTitleText, { color: isDark ? '#9ca3af' : '#435977' }]} numberOfLines={1}>
+                          {item.listingTitle}
+                        </Text>
+                      </View>
+                    )}
 
                     {(item.email || item.phone) && (
                       <Text style={[styles.cardMeta, { color: colors.placeholder }]}>
@@ -408,6 +450,78 @@ const styles = StyleSheet.create({
   timestampText: {
     fontSize: 10,
     marginTop: 8,
+    fontFamily: Typography.fontFamily,
+  },
+  masterLeadBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  masterLeadBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    fontFamily: Typography.fontFamily,
+  },
+  unassignedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  unassignedBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  selfAssignedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  selfAssignedBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  assignedAgentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginTop: 6,
+  },
+  agentInitialsCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  agentInitialsText: {
+    color: '#ffffff',
+    fontSize: 8.5,
+    fontWeight: '700',
+  },
+  assignedAgentName: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+  },
+  listingTitleText: {
+    fontSize: 11.5,
+    fontWeight: '500',
     fontFamily: Typography.fontFamily,
   },
 });

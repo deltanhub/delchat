@@ -12,13 +12,57 @@ const _statusListeners = new Set<(status: SyncStatus) => void>();
 let _isDraining = false;
 let _appStateSubscribed = false;
 
+// 500k CCU Reconnection Storm Shield state
+let _lastPresenceTouchTime = 0;
+export const PRESENCE_TOUCH_THROTTLE_MS = 30000; // 30 seconds throttle per device
+let _presenceTouchPromise: Promise<void> | null = null;
+let _inFlightConnectivityPromise: Promise<boolean> | null = null;
+
+/**
+ * Calculate randomized full jitter delay for reconnection storm defense.
+ */
+export function calculateJitter(minMs = 500, maxMs = 3500): number {
+  return Math.floor(minMs + Math.random() * (maxMs - minMs));
+}
+
+/**
+ * Throttle and deduplicate presence touches across 500,000 CCU.
+ * Prevents simultaneous mass database write storms on network recovery.
+ */
+export async function touchUserPresenceSafely(client: any = supabase): Promise<void> {
+  const now = Date.now();
+  if (now - _lastPresenceTouchTime < PRESENCE_TOUCH_THROTTLE_MS) {
+    return;
+  }
+  if (_presenceTouchPromise) {
+    return _presenceTouchPromise;
+  }
+
+  _lastPresenceTouchTime = now;
+  _presenceTouchPromise = (async () => {
+    try {
+      await client.rpc('touch_user_presence');
+    } catch (err) {
+      console.warn('[SyncCoordinator] touch_user_presence error:', err);
+    } finally {
+      _presenceTouchPromise = null;
+    }
+  })();
+
+  return _presenceTouchPromise;
+}
+
 function ensureAppStateListener() {
   if (_appStateSubscribed) return;
   _appStateSubscribed = true;
   AppState.addEventListener('change', (state: AppStateStatus) => {
     if (state === 'active') {
-      void SyncCoordinator.checkConnectivity();
-      void supabase.rpc('touch_user_presence');
+      // 500k CCU Storm Shield: apply randomized jitter to prevent edge gateway pounding
+      const jitterMs = calculateJitter(500, 3500);
+      setTimeout(() => {
+        void SyncCoordinator.checkConnectivity();
+        void touchUserPresenceSafely();
+      }, jitterMs);
     }
   });
 }
@@ -36,25 +80,35 @@ export const SyncCoordinator = {
 
   /**
    * Proactively verify active internet connectivity against the API.
-   * Updates status to 'online' or 'offline' based on real network reachability.
+   * Features in-flight request coalescing to prevent duplicate probes.
    */
   async checkConnectivity(): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch('https://deltanhub.com', {
-        method: 'HEAD',
-        signal: controller.signal,
-        cache: 'no-store',
-      });
-      clearTimeout(timer);
-      const isOnline = res.status < 500;
-      this.setStatus(isOnline ? 'online' : 'offline');
-      return isOnline;
-    } catch {
-      this.setStatus('offline');
-      return false;
+    if (_inFlightConnectivityPromise) {
+      return _inFlightConnectivityPromise;
     }
+
+    _inFlightConnectivityPromise = (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch('https://deltanhub.com', {
+          method: 'HEAD',
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        clearTimeout(timer);
+        const isOnline = res.status < 500;
+        this.setStatus(isOnline ? 'online' : 'offline');
+        return isOnline;
+      } catch {
+        this.setStatus('offline');
+        return false;
+      } finally {
+        _inFlightConnectivityPromise = null;
+      }
+    })();
+
+    return _inFlightConnectivityPromise;
   },
 
   subscribe(listener: (status: SyncStatus) => void): () => void {
@@ -343,6 +397,59 @@ export const SyncCoordinator = {
       return [];
     }
   },
+
+  /**
+   * Zero-DB Realtime WebSocket Broadcast to recipient inbox.
+   * Pushes sub-50ms instant signal to recipient's inbox channel without database load.
+   */
+  broadcastInboxAlert(params: {
+    recipientUserId?: string | null;
+    conversationId: string;
+    senderUserId?: string | null;
+  }): void {
+    const { recipientUserId, conversationId, senderUserId } = params;
+    if (!recipientUserId) return;
+    try {
+      const channelName = `inbox-sync-${recipientUserId}`;
+      const existing = supabase.getChannels().find(
+        (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+      );
+      if (existing && (existing.state === 'joined' || (existing as any).status === 'SUBSCRIBED')) {
+        void existing.send({
+          type: 'broadcast',
+          event: 'new_message',
+          payload: { conversationId, senderId: senderUserId },
+        });
+        return;
+      }
+
+      if (existing) {
+        void supabase.removeChannel(existing);
+      }
+
+      const channel = supabase.channel(channelName);
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void channel.send({
+            type: 'broadcast',
+            event: 'new_message',
+            payload: { conversationId, senderId: senderUserId },
+          });
+          setTimeout(() => {
+            void supabase.removeChannel(channel);
+          }, 2000);
+        }
+      });
+    } catch (err) {
+      console.warn('[SyncCoordinator] Non-blocking broadcast alert notice:', err);
+    }
+  },
 };
+
+export const broadcastInboxAlert = (params: {
+  recipientUserId?: string | null;
+  conversationId: string;
+  senderUserId?: string | null;
+}) => SyncCoordinator.broadcastInboxAlert(params);
 
 export default SyncCoordinator;

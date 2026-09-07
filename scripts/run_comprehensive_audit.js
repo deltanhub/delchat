@@ -213,8 +213,8 @@ assert(
 
 const catalogContent = fs.readFileSync(path.join(DELCHAT_DIR, 'components', 'chat', 'PropertyCatalogModal.tsx'), 'utf8');
 assert(
-  catalogContent.includes(".eq('status', 'published')"),
-  'PropertyCatalogModal filters listings by status = published'
+  catalogContent.includes("get_my_catalog_listings") && catalogContent.includes(".rpc("),
+  'PropertyCatalogModal uses get_my_catalog_listings RPC for user-exclusive catalog (not raw listing_submissions)'
 );
 
 // -----------------------------------------------------------------------------

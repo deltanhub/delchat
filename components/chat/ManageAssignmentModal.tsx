@@ -12,7 +12,7 @@ import {
   Platform,
   Pressable,
   Image,
-  Alert,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,6 +56,7 @@ export default function ManageAssignmentModal({
   );
   const [handoffNote, setHandoffNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Sync selected agent if prop changes
   useEffect(() => {
@@ -64,6 +65,7 @@ export default function ManageAssignmentModal({
 
   const fetchBrokerageAgents = useCallback(async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const { data: authData } = await supabase.auth.getUser();
       const currentUser = authData?.user;
@@ -81,6 +83,7 @@ export default function ManageAssignmentModal({
       setAgents(agentList);
     } catch (err: any) {
       console.warn('[ManageAssignmentModal] Error loading agents:', err);
+      setErrorMessage(err?.message || 'Failed to load brokerage agents');
     } finally {
       setLoading(false);
     }
@@ -91,6 +94,7 @@ export default function ManageAssignmentModal({
       fetchBrokerageAgents();
       setSearchQuery('');
       setHandoffNote('');
+      setErrorMessage(null);
     }
   }, [visible, fetchBrokerageAgents]);
 
@@ -109,11 +113,13 @@ export default function ManageAssignmentModal({
 
   const handleAssign = async () => {
     if (!selectedAgent) {
-      Alert.alert('Selection Required', 'Please select an agent to assign this lead to.');
+      setErrorMessage('Please select an agent to assign this lead to.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
     setIsSubmitting(true);
+    setErrorMessage(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
@@ -134,7 +140,8 @@ export default function ManageAssignmentModal({
       onClose();
     } catch (err: any) {
       console.warn('[ManageAssignmentModal] Error updating assignment:', err);
-      Alert.alert('Assignment Error', err?.message || 'Unable to update assignment.');
+      setErrorMessage(err?.message || 'Unable to update assignment.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSubmitting(false);
     }
@@ -142,6 +149,7 @@ export default function ManageAssignmentModal({
 
   const handleUnassign = async () => {
     setIsSubmitting(true);
+    setErrorMessage(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
@@ -159,7 +167,8 @@ export default function ManageAssignmentModal({
       onClose();
     } catch (err: any) {
       console.warn('[ManageAssignmentModal] Error unassigning lead:', err);
-      Alert.alert('Error', err?.message || 'Unable to unassign lead.');
+      setErrorMessage(err?.message || 'Unable to unassign lead.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSubmitting(false);
     }
@@ -167,19 +176,25 @@ export default function ManageAssignmentModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlay}
+      >
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View
           style={[
             styles.container,
             {
               backgroundColor: colors.card,
-              paddingBottom: Math.max(insets.bottom, 20),
+              borderTopColor: colors.border,
+              paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
-          onPress={(e) => e.stopPropagation()}
         >
           {/* Top Drag Indicator */}
-          <View style={styles.dragHandle} />
+          <View style={styles.dragHandleContainer}>
+            <View style={[styles.dragHandle, { backgroundColor: isDark ? '#383848' : '#cbd5e1' }]} />
+          </View>
 
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -202,6 +217,24 @@ export default function ManageAssignmentModal({
             </TouchableOpacity>
           </View>
 
+          {/* Error Banner */}
+          {errorMessage ? (
+            <View
+              style={[
+                styles.errorBanner,
+                {
+                  backgroundColor: isDark ? '#2d1419' : '#fff5f6',
+                  borderColor: isDark ? '#5c1d29' : '#fed7dd',
+                },
+              ]}
+            >
+              <Ionicons name="alert-circle" size={16} color="#e11d48" style={{ marginRight: 6 }} />
+              <Text style={[styles.errorText, { color: isDark ? '#fda4af' : '#be123c' }]}>
+                {errorMessage}
+              </Text>
+            </View>
+          ) : null}
+
           {/* Search Box */}
           <View style={[styles.searchContainer, { borderBottomColor: colors.border }]}>
             <View
@@ -213,7 +246,10 @@ export default function ManageAssignmentModal({
               <Ionicons name="search" size={17} color={colors.placeholder} style={{ marginRight: 8 }} />
               <TextInput
                 value={searchQuery}
-                onChangeText={setSearchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  if (errorMessage) setErrorMessage(null);
+                }}
                 placeholder="Search brokerage agents by name or role..."
                 placeholderTextColor={colors.placeholder}
                 style={[styles.searchInput, { color: colors.text }]}
@@ -229,7 +265,7 @@ export default function ManageAssignmentModal({
           </View>
 
           {/* Agent Selection List */}
-          <View style={{ flex: 1 }}>
+          <View style={styles.listWrapper}>
             {loading ? (
               <View style={styles.centerContainer}>
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -251,6 +287,7 @@ export default function ManageAssignmentModal({
                 keyExtractor={(item) => item.userId}
                 contentContainerStyle={styles.listContent}
                 keyboardShouldPersistTaps="handled"
+                style={styles.agentList}
                 renderItem={({ item }) => {
                   const isSelected = selectedAgentId === item.userId;
                   const isCurrent = currentAssignedAgentId === item.userId;
@@ -260,6 +297,7 @@ export default function ManageAssignmentModal({
                       onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setSelectedAgentId(item.userId);
+                        if (errorMessage) setErrorMessage(null);
                       }}
                       style={[
                         styles.agentCard,
@@ -394,22 +432,26 @@ export default function ManageAssignmentModal({
               </ScalePressable>
             </View>
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'flex-end',
   },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
   container: {
-    height: SCREEN_HEIGHT * 0.88,
+    maxHeight: SCREEN_HEIGHT * 0.90,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderTopWidth: 1,
     overflow: 'hidden',
     ...Platform.select({
       ios: {
@@ -423,14 +465,14 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  dragHandleContainer: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
   dragHandle: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#cbd5e1',
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 6,
   },
   header: {
     flexDirection: 'row',
@@ -470,6 +512,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  errorText: {
+    fontSize: 12,
+    fontWeight: '500',
+    flex: 1,
+  },
   searchContainer: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -488,12 +545,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingVertical: 0,
   },
+  listWrapper: {
+    maxHeight: SCREEN_HEIGHT * 0.40,
+    flexShrink: 1,
+  },
+  agentList: {
+    flexGrow: 0,
+  },
   centerContainer: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
-    paddingVertical: 40,
+    paddingVertical: 28,
   },
   loadingText: {
     fontSize: 13,
@@ -512,8 +575,8 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 10,
+    paddingVertical: 10,
+    gap: 8,
   },
   agentCard: {
     borderRadius: 14,

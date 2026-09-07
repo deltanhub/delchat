@@ -44,6 +44,35 @@ export const OfflineEngine = {
   // -------------------------------------------------------------
 
   /**
+   * Synchronously get cached messages from in-memory hot cache for instant 0ms Frame 1 rendering.
+   */
+  getMessagesSync(conversationId: string): ChatMessage[] {
+    if (!conversationId) return [];
+    return _memoryMessageCache.get(conversationId) || [];
+  },
+
+  /**
+   * Synchronously update in-memory hot cache with a single message (0ms latency)
+   * and persist asynchronously to storage.
+   */
+  saveSingleMessage(conversationId: string, message: ChatMessage): void {
+    if (!conversationId || !message) return;
+    const current = _memoryMessageCache.get(conversationId) || [];
+    const filtered = current.filter((m) => m.id !== message.id);
+    const updated = [message, ...filtered]
+      .sort((a, b) => {
+        const timeA = new Date(a.sentAt).getTime();
+        const timeB = new Date(b.sentAt).getTime();
+        return timeB - timeA;
+      })
+      .slice(0, MAX_CACHED_MESSAGES_PER_THREAD);
+    _memoryMessageCache.set(conversationId, updated);
+    void AsyncStorage.setItem(`${MESSAGES_PREFIX}${conversationId}`, JSON.stringify(updated)).catch((e) => {
+      console.warn(`[OfflineEngine] Failed to persist single message for ${conversationId}:`, e);
+    });
+  },
+
+  /**
    * Get cached messages for a conversation. Checks in-memory hot cache first,
    * then falls back to AsyncStorage.
    */

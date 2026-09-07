@@ -1,6 +1,6 @@
 import { supabase } from '../supabase';
 import { resolveAvatarUrl, resolveListingImageUrl } from '../media-utils';
-import { canAssignAgents, isAgent, AppProfile } from '../auth';
+import { canAssignAgents, canReceiveLeads, isAgent, AppProfile } from '../auth';
 import type { ChatConversation } from '../../components/chat/ConversationRow';
 
 export interface FetchInboxOptions {
@@ -23,7 +23,7 @@ export const conversationRepository = {
     // 1. Get participant rows for currentUser
     const { data: participations, error: partErr } = await supabase
       .from('chat_participants')
-      .select('conversation_id, participant_role, last_read_at, archived_at, muted_until, pinned_at')
+      .select('conversation_id, participant_role, last_read_at, archived_at, muted_until, pinned_at, favorited_at, cleared_history_at')
       .eq('user_id', currentUserId)
       .is('removed_at', null);
 
@@ -34,34 +34,18 @@ export const conversationRepository = {
       return [];
     }
 
-    // 2. Query conversations with context_snapshot
+    // 2. Query conversations with context_snapshot and ownership
     const { data: convRows, error: convErr } = await supabase
       .from('chat_conversations')
       .select(`
         id, conversation_kind, updated_at,
-        listing_id, context_snapshot, last_message_preview, last_message_at
+        listing_id, buyer_user_id, agency_user_id, recipient_user_id,
+        context_snapshot, last_message_preview, last_message_at
       `)
       .in('id', convIds)
       .order('updated_at', { ascending: false });
 
     if (convErr) throw convErr;
-
-    // Extract listing IDs for any conversation missing snapshot listing metadata
-    const missingListingIds: string[] = [];
-    convRows?.forEach((c: any) => {
-      if (c.listing_id && !c.context_snapshot?.listing?.title) {
-        missingListingIds.push(c.listing_id);
-      }
-    });
-
-    const listingSubmissionsMap = new Map<string, any>();
-    if (missingListingIds.length > 0) {
-      const { data: listingRows } = await supabase
-        .from('listing_submissions')
-        .select('id, title, homepage_image_url')
-        .in('id', missingListingIds);
-      listingRows?.forEach((l: any) => listingSubmissionsMap.set(l.id, l));
-    }
 
     // 3. Query crm_inquiries for these conversations
     const { data: inquiryRows } = await supabase
@@ -81,6 +65,28 @@ export const conversationRepository = {
       }
     });
 
+    // Extract listing IDs from conversations and CRM inquiries to fetch metadata
+    const allListingIds: string[] = [];
+    convRows?.forEach((c: any) => {
+      if (c.listing_id) {
+        allListingIds.push(c.listing_id);
+      }
+    });
+    inquiryRows?.forEach((inq: any) => {
+      if (inq.listing_id) {
+        allListingIds.push(inq.listing_id);
+      }
+    });
+
+    const listingSubmissionsMap = new Map<string, any>();
+    if (allListingIds.length > 0) {
+      const { data: listingRows } = await supabase
+        .from('listing_submissions')
+        .select('id, title, homepage_image_url, assigned_agent_user_id, address, city, state, listing_type, listing_status, reference_code')
+        .in('id', Array.from(new Set(allListingIds)));
+      listingRows?.forEach((l: any) => listingSubmissionsMap.set(l.id, l));
+    }
+
     // 4. Query participants of these conversations to find partner
     const { data: allParticipants } = await supabase
       .from('chat_participants')
@@ -96,11 +102,26 @@ export const conversationRepository = {
       )
     );
 
-    // Collect partner IDs and assigned agent IDs
+    // Collect partner IDs, buyer IDs, agency IDs and assigned agent IDs
     const userIdsToResolve = new Set<string>(partnerUserIds);
     inquiryRows?.forEach((inq: any) => {
-      if (inq.assigned_agent_user_id) {
-        userIdsToResolve.add(inq.assigned_agent_user_id);
+      if (inq.buyer_user_id) userIdsToResolve.add(inq.buyer_user_id);
+      if (inq.agency_user_id) userIdsToResolve.add(inq.agency_user_id);
+      if (inq.company_user_id) userIdsToResolve.add(inq.company_user_id);
+      if (inq.assigned_agent_user_id) userIdsToResolve.add(inq.assigned_agent_user_id);
+    });
+    listingSubmissionsMap.forEach((l: any) => {
+      if (l.assigned_agent_user_id) {
+        userIdsToResolve.add(l.assigned_agent_user_id);
+      }
+    });
+    convRows?.forEach((c: any) => {
+      if (c.buyer_user_id) userIdsToResolve.add(c.buyer_user_id);
+      if (c.agency_user_id) userIdsToResolve.add(c.agency_user_id);
+      if (c.recipient_user_id) userIdsToResolve.add(c.recipient_user_id);
+      const snapAgentId = c.context_snapshot?.listing?.assigned_agent_user_id;
+      if (snapAgentId) {
+        userIdsToResolve.add(snapAgentId);
       }
     });
 
@@ -129,10 +150,13 @@ export const conversationRepository = {
     const partMap = new Map(participations?.map((p) => [p.conversation_id, p]));
 
     latestMessages?.forEach((msg) => {
+      const part = partMap.get(msg.conversation_id);
+      if (part?.cleared_history_at && msg.created_at <= part.cleared_history_at) {
+        return;
+      }
       if (!lastMsgMap.has(msg.conversation_id)) {
         lastMsgMap.set(msg.conversation_id, msg);
       }
-      const part = partMap.get(msg.conversation_id);
       const lastReadTime = part?.last_read_at ? new Date(part.last_read_at).getTime() : 0;
       const msgTime = new Date(msg.created_at).getTime();
 
@@ -146,24 +170,71 @@ export const conversationRepository = {
 
     const mapped: ChatConversation[] = (convRows || []).map((c: any) => {
       const part = partMap.get(c.id);
-      const partnerPart = (allParticipants || []).find(
-        (p) => p.conversation_id === c.id && p.user_id !== currentUserId
-      );
-      const partnerProfile = partnerPart?.user_id ? profileMap.get(partnerPart.user_id) : null;
+      const inq = inquiryMap.get(c.id);
+
+      // Determine if viewer is the client/buyer in this conversation
+      const currentParticipantRole = part?.participant_role;
+      const isViewerBuyer = currentParticipantRole === 'buyer' || (!c.agency_user_id && c.buyer_user_id === currentUserId);
+
+      // Can viewer manage assignments in this thread? (DeltanHub Web parity: chat-service.ts:L2862)
+      const canAssignAgentsInThread =
+        Boolean(c.agency_user_id && c.agency_user_id === currentUserId) ||
+        Boolean(inq?.company_user_id && inq.company_user_id === currentUserId);
+
+      // Resolve conversational partner (Buyer/Client when viewed by Agency/Agent/Dev)
+      let partnerUserId: string | null = null;
+      if (!isViewerBuyer) {
+        // When viewed by Agency/Developer/Agent, the conversation partner is the client/buyer
+        const targetBuyerId = c.buyer_user_id || inq?.buyer_user_id;
+        if (targetBuyerId && targetBuyerId !== currentUserId) {
+          partnerUserId = targetBuyerId;
+        } else {
+          const buyerPart = (allParticipants || []).find(
+            (p) => p.conversation_id === c.id && p.participant_role === 'buyer' && p.user_id !== currentUserId
+          );
+          if (buyerPart?.user_id) {
+            partnerUserId = buyerPart.user_id;
+          }
+        }
+      } else {
+        // When viewed by Buyer, the partner is the Agency / Publisher
+        const targetAgencyId = c.agency_user_id || inq?.agency_user_id || inq?.company_user_id;
+        if (targetAgencyId && targetAgencyId !== currentUserId) {
+          partnerUserId = targetAgencyId;
+        }
+      }
+
+      // Fallback: any other non-self participant
+      if (!partnerUserId) {
+        const otherPart = (allParticipants || []).find(
+          (p) => p.conversation_id === c.id && p.user_id !== currentUserId
+        );
+        partnerUserId = otherPart?.user_id || null;
+      }
+
+      const partnerProfile = partnerUserId ? profileMap.get(partnerUserId) : null;
 
       const snapshotListing = c.context_snapshot?.listing;
-      const fallbackListing = c.listing_id ? listingSubmissionsMap.get(c.listing_id) : null;
+      const fallbackListing =
+        (c.listing_id ? listingSubmissionsMap.get(c.listing_id) : null) ||
+        (inq?.listing_id ? listingSubmissionsMap.get(inq.listing_id) : null);
       const resolvedListing = snapshotListing || fallbackListing;
 
       const listingObj = resolvedListing
         ? {
-            id: resolvedListing.id || c.listing_id,
+            id: resolvedListing.id || c.listing_id || inq?.listing_id,
             title: resolvedListing.title,
             imageUrl: resolveListingImageUrl(
               resolvedListing.imageUrl ||
               resolvedListing.homepage_image_url ||
               resolvedListing.cover_image_url
             ),
+            address: resolvedListing.address,
+            city: resolvedListing.city,
+            state: resolvedListing.state,
+            listingType: resolvedListing.listingType || resolvedListing.listing_type,
+            listingStatus: resolvedListing.listingStatus || resolvedListing.listing_status,
+            referenceCode: resolvedListing.referenceCode || resolvedListing.reference_code,
           }
         : null;
 
@@ -177,17 +248,19 @@ export const conversationRepository = {
         ? resolveAvatarUrl(partnerProfile.avatar_url)
         : null;
 
+      const isHistoryCleared = Boolean(part?.cleared_history_at && c.last_message_at && c.last_message_at <= part.cleared_history_at);
       const lastMsg = lastMsgMap.get(c.id);
-      const preview =
-        lastMsg?.message_kind === 'voice_note'
-          ? '🎤 Voice note'
-          : lastMsg?.message_kind === 'attachments'
-          ? '📎 Attachment'
-          : lastMsg?.message_kind === 'listing_card'
-          ? '🏡 Property Card'
-          : lastMsg?.message_kind === 'inquiry_form'
-          ? '📋 Inquiry Form'
-          : lastMsg?.body || c.last_message_preview || 'No messages yet';
+      const preview = isHistoryCleared
+        ? 'No messages yet'
+        : lastMsg?.message_kind === 'voice_note'
+        ? '🎤 Voice note'
+        : lastMsg?.message_kind === 'attachments'
+        ? '📎 Attachment'
+        : lastMsg?.message_kind === 'listing_card'
+        ? '🏡 Property Card'
+        : lastMsg?.message_kind === 'inquiry_form'
+        ? '📋 Inquiry Form'
+        : lastMsg?.body || c.last_message_preview || 'No messages yet';
 
       const unreadCount = unreadMap.get(c.id) || 0;
       const isMuted = part?.muted_until ? new Date(part.muted_until) > new Date() : false;
@@ -195,11 +268,18 @@ export const conversationRepository = {
       const isArchived = Boolean(part?.archived_at);
 
       // Lead Assignment context
-      const inq = inquiryMap.get(c.id);
-      let assignedAgentName = 'Assigned Agent';
+      const listingAssignedAgentId =
+        resolvedListing?.assigned_agent_user_id ||
+        c.context_snapshot?.listing?.assigned_agent_user_id ||
+        null;
+
+      const effectiveAgentUserId =
+        inq?.assigned_agent_user_id || listingAssignedAgentId || null;
+
+      let assignedAgentName: string | null = null;
       let assignedAgentAvatar: string | null = null;
-      if (inq?.assigned_agent_user_id) {
-        const agentProfile = profileMap.get(inq.assigned_agent_user_id);
+      if (effectiveAgentUserId) {
+        const agentProfile = profileMap.get(effectiveAgentUserId);
         if (agentProfile) {
           assignedAgentName =
             agentProfile.display_name?.trim() ||
@@ -209,16 +289,63 @@ export const conversationRepository = {
         }
       }
 
-      const assignmentObj = inq
+      // Professional role check for lead assignment access
+      const isViewerProfessional = canReceiveLeads(currentProfile?.mainRole);
+
+      // In DeltanHub Web, an assignment object is only returned when an agent is actually assigned
+      const hasAssignedAgent = Boolean(inq?.assigned_agent_user_id || effectiveAgentUserId);
+
+      const assignmentObj = (inq && isViewerProfessional && hasAssignedAgent)
         ? {
+            id: inq.id,
+            inquiryId: inq.id,
             leadId: inq.id,
             status: inq.master_lead_status || inq.inquiry_status || 'new',
-            assignedAgentUserId: inq.assigned_agent_user_id,
-            assignedAgentName,
-            assignedAgentAvatar,
-            agencyUserId: inq.agency_user_id || inq.company_user_id,
+            masterLeadStatus: inq.master_lead_status || inq.inquiry_status || 'new',
+            assignedAgentUserId: inq.assigned_agent_user_id || effectiveAgentUserId,
+            assignedAgentName: (inq.assigned_agent_user_id || effectiveAgentUserId) ? (assignedAgentName || 'Assigned Agent') : null,
+            assignedAgentAvatar: (inq.assigned_agent_user_id || effectiveAgentUserId) ? assignedAgentAvatar : null,
+            assignedByUserId: inq.company_user_id || inq.agency_user_id || c.agency_user_id || null,
+            assignedAt: inq.assigned_at || inq.created_at || c.updated_at || null,
+            agencyUserId: inq.agency_user_id || inq.company_user_id || c.agency_user_id || null,
             agentShareEnabled: Boolean(inq.agent_share_enabled),
-            handoffNote: inq.handoff_note,
+            handoffNote: inq.handoff_note || null,
+            agent: inq.assigned_agent_user_id
+              ? {
+                  userId: inq.assigned_agent_user_id,
+                  fullName: assignedAgentName || 'Assigned Agent',
+                  avatarUrl: assignedAgentAvatar,
+                }
+              : effectiveAgentUserId
+              ? {
+                  userId: effectiveAgentUserId,
+                  fullName: assignedAgentName || 'Assigned Agent',
+                  avatarUrl: assignedAgentAvatar,
+                }
+              : null,
+          }
+        : (isViewerProfessional && effectiveAgentUserId)
+        ? {
+            id: `listing_inq_${c.id}`,
+            inquiryId: `listing_inq_${c.id}`,
+            leadId: `listing_inq_${c.id}`,
+            status: 'new',
+            masterLeadStatus: 'new',
+            assignedAgentUserId: effectiveAgentUserId,
+            assignedAgentName: effectiveAgentUserId ? (assignedAgentName || 'Assigned Agent') : null,
+            assignedAgentAvatar: effectiveAgentUserId ? assignedAgentAvatar : null,
+            assignedByUserId: c.agency_user_id || null,
+            assignedAt: c.updated_at || null,
+            agencyUserId: c.agency_user_id || null,
+            agentShareEnabled: false,
+            handoffNote: null,
+            agent: effectiveAgentUserId
+              ? {
+                  userId: effectiveAgentUserId,
+                  fullName: assignedAgentName || 'Assigned Agent',
+                  avatarUrl: assignedAgentAvatar,
+                }
+              : null,
           }
         : null;
 
@@ -235,7 +362,7 @@ export const conversationRepository = {
         partnerName,
         partnerSubtitle: listingObj?.title || (isGroup ? 'Group Conversation' : 'Direct Message'),
         partnerAvatarUrl,
-        partnerUserId: partnerPart?.user_id || null,
+        partnerUserId: partnerUserId || null,
         partnerLastSeenAt: partnerProfile?.last_seen_at || null,
         isGroup,
         participantCount: 2,
@@ -243,10 +370,26 @@ export const conversationRepository = {
         isPinned,
         isArchived,
         pinnedAt: part?.pinned_at || null,
+        isFavorited: Boolean(part?.favorited_at),
+        favoritedAt: part?.favorited_at || null,
+        clearedHistoryAt: part?.cleared_history_at || null,
         listing: listingObj,
         assignment: assignmentObj,
-        canAssignAgents: isViewerAgencyOrDev,
+        canAssignAgents: canAssignAgentsInThread,
       };
+    });
+
+    mapped.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      if (a.isPinned && b.isPinned) {
+        const aPin = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+        const bPin = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+        if (bPin !== aPin) return bPin - aPin;
+      }
+      const stampA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const stampB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return stampB - stampA;
     });
 
     return mapped;
@@ -260,6 +403,33 @@ export const conversationRepository = {
       p_conversation_id: conversationId,
     });
     if (error) throw error;
+  },
+
+  /**
+   * Mark unread messages in a conversation as delivered atomically via RPC.
+   * Updates delivered_at and message_status to 'delivered' so sender sees double grey checkmarks.
+   */
+  async markConversationDelivered(
+    conversationId: string,
+    messageIds?: string[] | null
+  ): Promise<{ success: boolean; messagesDelivered: number }> {
+    try {
+      const { data, error } = await supabase.rpc('mark_chat_conversation_delivered_atomic', {
+        p_conversation_id: conversationId,
+        p_message_ids: messageIds && messageIds.length > 0 ? messageIds : null,
+      });
+      if (error) {
+        console.warn('[conversationRepository] markConversationDelivered error:', error.message);
+        return { success: false, messagesDelivered: 0 };
+      }
+      return {
+        success: Boolean(data?.success),
+        messagesDelivered: Number(data?.messages_delivered || 0),
+      };
+    } catch (err: any) {
+      console.warn('[conversationRepository] markConversationDelivered catch:', err?.message);
+      return { success: false, messagesDelivered: 0 };
+    }
   },
 
   /**
@@ -351,6 +521,114 @@ export const conversationRepository = {
     const { error } = await supabase
       .from('chat_participants')
       .update({ last_read_at: null })
+      .eq('conversation_id', conversationId)
+      .eq('user_id', currentUserId);
+
+    if (error) throw error;
+  },
+
+  /**
+   * Toggle block/unblock for a user in chat.
+   * Calls the atomic SECURITY DEFINER RPC toggle_chat_user_block.
+   */
+  async toggleChatUserBlock(targetUserId: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('toggle_chat_user_block', {
+      p_target_user_id: targetUserId,
+    });
+    if (error) throw error;
+    return Boolean(data);
+  },
+
+  /**
+   * Checks bidirectional chat block status between current user and target user.
+   */
+  async checkChatBlockedStatus(
+    currentUserId: string,
+    targetUserId: string
+  ): Promise<{ isBlocked: boolean; blockedByMe: boolean; hasBlockedMe: boolean }> {
+    const { data, error } = await supabase
+      .from('chat_blocked_users')
+      .select('blocker_user_id, blocked_user_id')
+      .or(`blocker_user_id.eq.${currentUserId},blocked_user_id.eq.${currentUserId}`);
+
+    if (error || !data) {
+      return { isBlocked: false, blockedByMe: false, hasBlockedMe: false };
+    }
+
+    const blockedByMe = data.some(
+      (b: any) => b.blocker_user_id === currentUserId && b.blocked_user_id === targetUserId
+    );
+    const hasBlockedMe = data.some(
+      (b: any) => b.blocker_user_id === targetUserId && b.blocked_user_id === currentUserId
+    );
+
+    return {
+      isBlocked: blockedByMe || hasBlockedMe,
+      blockedByMe,
+      hasBlockedMe,
+    };
+  },
+
+  /**
+   * Toggle favorited state for a conversation atomically via RPC.
+   */
+  async toggleConversationFavorite(
+    conversationId: string,
+    willFavorite?: boolean
+  ): Promise<{ success: boolean; isFavorited: boolean; favoritedAt: string | null }> {
+    const { data, error } = await supabase.rpc('toggle_chat_conversation_favorite_atomic', {
+      p_conversation_id: conversationId,
+      p_favorited: willFavorite !== undefined ? willFavorite : null,
+    });
+    if (error) {
+      console.warn('[conversationRepository] toggleConversationFavorite error:', error.message);
+      throw error;
+    }
+    return {
+      success: Boolean(data?.success),
+      isFavorited: Boolean(data?.is_favorited),
+      favoritedAt: data?.favorited_at || null,
+    };
+  },
+
+  /**
+   * Clear conversation history for actor via atomic RPC with fallback.
+   */
+  async clearConversationHistory(
+    conversationId: string,
+    currentUserId?: string
+  ): Promise<{ success: boolean; clearedHistoryAt: string }> {
+    const { data, error } = await supabase.rpc('clear_chat_conversation_history_atomic', {
+      p_conversation_id: conversationId,
+    });
+
+    if (error) {
+      console.warn('[conversationRepository] clear_chat_conversation_history_atomic fallback:', error.message);
+      if (currentUserId) {
+        const fallbackIso = new Date().toISOString();
+        await supabase
+          .from('chat_participants')
+          .update({ cleared_history_at: fallbackIso })
+          .eq('conversation_id', conversationId)
+          .eq('user_id', currentUserId);
+        return { success: true, clearedHistoryAt: fallbackIso };
+      }
+      throw error;
+    }
+
+    return {
+      success: Boolean(data?.success),
+      clearedHistoryAt: data?.cleared_history_at || new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Delete conversation for user (soft delete by marking removed_at).
+   */
+  async deleteConversation(conversationId: string, currentUserId: string): Promise<void> {
+    const { error } = await supabase
+      .from('chat_participants')
+      .update({ removed_at: new Date().toISOString() })
       .eq('conversation_id', conversationId)
       .eq('user_id', currentUserId);
 

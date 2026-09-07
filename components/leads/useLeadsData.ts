@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import * as Haptics from '../../lib/haptics';
 import { isAgencyOrDeveloper, isAgent, AppProfile } from '../../lib/auth';
+import { resolveAvatarUrl } from '../../lib/media-utils';
 import { ChatLeadItem, ManualLeadItem } from './types';
 
 export function useLeadsData(currentUser: any, currentProfile: AppProfile | null) {
@@ -31,6 +32,15 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
           assigned_to_user_id, created_by_user_id, created_at
         `);
 
+      let agentAssignedListingIds: string[] = [];
+      if (isAgentUser) {
+        const { data: assignedListings } = await supabase
+          .from('listing_submissions')
+          .select('id')
+          .eq('assigned_agent_user_id', currentUser.id);
+        agentAssignedListingIds = (assignedListings || []).map((l: any) => l.id).filter(Boolean);
+      }
+
       if (isAgencyDev) {
         const { data: agencyMembers } = await supabase
           .from('agency_agent_memberships')
@@ -53,9 +63,15 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
           `assigned_to_user_id.in.(${orgMemberIds.join(',')}),created_by_user_id.in.(${orgMemberIds.join(',')})`
         );
       } else if (isAgentUser) {
-        chatQuery = chatQuery.or(
-          `assigned_to_user_id.eq.${currentUser.id},created_by_user_id.eq.${currentUser.id}`
-        );
+        if (agentAssignedListingIds.length > 0) {
+          chatQuery = chatQuery.or(
+            `assigned_to_user_id.eq.${currentUser.id},created_by_user_id.eq.${currentUser.id},listing_id.in.(${agentAssignedListingIds.join(',')})`
+          );
+        } else {
+          chatQuery = chatQuery.or(
+            `assigned_to_user_id.eq.${currentUser.id},created_by_user_id.eq.${currentUser.id}`
+          );
+        }
       } else {
         chatQuery = chatQuery.or(
           `created_by_user_id.eq.${currentUser.id},assigned_to_user_id.eq.${currentUser.id}`
@@ -79,7 +95,13 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
           `company_user_id.eq.${currentUser.id},agency_user_id.eq.${currentUser.id},recipient_user_id.eq.${currentUser.id}`
         );
       } else if (isAgentUser) {
-        inqQuery = inqQuery.eq('assigned_agent_user_id', currentUser.id);
+        if (agentAssignedListingIds.length > 0) {
+          inqQuery = inqQuery.or(
+            `assigned_agent_user_id.eq.${currentUser.id},listing_id.in.(${agentAssignedListingIds.join(',')})`
+          );
+        } else {
+          inqQuery = inqQuery.eq('assigned_agent_user_id', currentUser.id);
+        }
       } else {
         inqQuery = inqQuery.or(
           `buyer_user_id.eq.${currentUser.id},recipient_user_id.eq.${currentUser.id}`
@@ -87,6 +109,33 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
       }
 
       const { data: rawInquiries } = await inqQuery.order('created_at', { ascending: false });
+
+      // Resolve listing titles and assigned agent user IDs for inquiry context
+      const listingIds = Array.from(
+        new Set(
+          [
+            ...(rawChatLeads || []).map((r: any) => r.listing_id),
+            ...(rawInquiries || []).map((i: any) => i.listing_id),
+            ...agentAssignedListingIds,
+          ].filter(Boolean)
+        )
+      );
+      const listingTitleMap = new Map<string, string>();
+      const listingAgentMap = new Map<string, string>();
+      const listingAssignedAgentIds: string[] = [];
+      if (listingIds.length > 0) {
+        const { data: listingRows } = await supabase
+          .from('listing_submissions')
+          .select('id, title, assigned_agent_user_id')
+          .in('id', listingIds);
+        (listingRows || []).forEach((lr: any) => {
+          if (lr.id && lr.title) listingTitleMap.set(lr.id, lr.title);
+          if (lr.id && lr.assigned_agent_user_id) {
+            listingAgentMap.set(lr.id, lr.assigned_agent_user_id);
+            listingAssignedAgentIds.push(lr.assigned_agent_user_id);
+          }
+        });
+      }
 
       // Resolve public profiles for inquiry buyer names
       const buyerIds = Array.from(new Set((rawInquiries || []).map((i) => i.buyer_user_id).filter(Boolean)));
@@ -100,22 +149,65 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
         });
       }
 
-      // Map chat leads
-      const mappedChatLeads: ChatLeadItem[] = (rawChatLeads || []).map((r: any) => ({
-        id: r.id,
-        conversationId: r.conversation_id,
-        inquiryId: r.inquiry_id,
-        listingId: r.listing_id,
-        source: r.source || 'chat',
-        fullName: r.full_name || 'Anonymous Client',
-        email: r.email,
-        phone: r.phone,
-        note: r.note,
-        status: (r.lead_status as ChatLeadItem['status']) || 'new',
-        assignedToUserId: r.assigned_to_user_id,
-        createdByUserId: r.created_by_user_id,
-        createdAt: r.created_at,
-      }));
+      // Resolve public profiles for assigned agents (including listing assigned agents)
+      const agentIds = Array.from(
+        new Set(
+          [
+            ...(rawChatLeads || []).map((r: any) => r.assigned_to_user_id),
+            ...(rawInquiries || []).map((i: any) => i.assigned_agent_user_id),
+            ...listingAssignedAgentIds,
+          ].filter(Boolean)
+        )
+      );
+      const agentMap = new Map<string, { fullName: string; avatarUrl: string | null }>();
+      if (agentIds.length > 0) {
+        const { data: agentProfiles } = await supabase.rpc('get_public_user_profiles', {
+          requested_user_ids: agentIds,
+        });
+        (agentProfiles || []).forEach((ap: any) => {
+          agentMap.set(ap.user_id, {
+            fullName: ap.display_name?.trim() || ap.full_name?.trim() || 'Agent',
+            avatarUrl: resolveAvatarUrl(ap.avatar_url),
+          });
+        });
+      }
+
+      // Build fast lookup for inquiries by ID and by conversation_id
+      const inqById = new Map<string, any>();
+      const inqByConvId = new Map<string, any>();
+      (rawInquiries || []).forEach((inq: any) => {
+        if (inq.id) inqById.set(inq.id, inq);
+        if (inq.conversation_id) inqByConvId.set(inq.conversation_id, inq);
+      });
+
+      // Map chat leads with consistent masterLeadStatus enrichment
+      const mappedChatLeads: ChatLeadItem[] = (rawChatLeads || []).map((r: any) => {
+        const linkedInq = (r.inquiry_id && inqById.get(r.inquiry_id)) || (r.conversation_id && inqByConvId.get(r.conversation_id));
+        const targetListingId = r.listing_id || linkedInq?.listing_id || null;
+        const listingAssignedAgent = targetListingId ? listingAgentMap.get(targetListingId) : null;
+        const assignedUserId = r.assigned_to_user_id || linkedInq?.assigned_agent_user_id || listingAssignedAgent || null;
+        const agentProfile = assignedUserId ? agentMap.get(assignedUserId) : null;
+
+        return {
+          id: r.id,
+          conversationId: r.conversation_id,
+          inquiryId: r.inquiry_id || linkedInq?.id || null,
+          listingId: targetListingId,
+          listingTitle: targetListingId ? listingTitleMap.get(targetListingId) || null : null,
+          source: r.source || 'chat',
+          fullName: r.full_name || (linkedInq?.buyer_user_id ? buyerNameMap.get(linkedInq.buyer_user_id) : null) || 'Anonymous Client',
+          email: r.email,
+          phone: r.phone,
+          note: r.note || linkedInq?.handoff_note || null,
+          status: (r.lead_status as ChatLeadItem['status']) || 'new',
+          assignedToUserId: assignedUserId,
+          assignedAgentName: agentProfile?.fullName || null,
+          assignedAgentAvatarUrl: agentProfile?.avatarUrl || null,
+          createdByUserId: r.created_by_user_id || linkedInq?.company_user_id || linkedInq?.agency_user_id || null,
+          createdAt: r.created_at,
+          masterLeadStatus: linkedInq?.master_lead_status || r.lead_status || 'new',
+        };
+      });
 
       // Add direct inquiry leads if not already mapped
       const existingConvIds = new Set(mappedChatLeads.map((m) => m.conversationId).filter(Boolean));
@@ -127,21 +219,29 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
               : inq.inquiry_status === 'lost'
               ? 'closed_lost'
               : inq.inquiry_status;
+          const targetListingId = inq.listing_id || null;
+          const listingAssignedAgent = targetListingId ? listingAgentMap.get(targetListingId) : null;
+          const assignedUserId = inq.assigned_agent_user_id || listingAssignedAgent || null;
+          const agentProfile = assignedUserId ? agentMap.get(assignedUserId) : null;
+
           mappedChatLeads.push({
             id: inq.id,
             conversationId: inq.conversation_id,
             inquiryId: inq.id,
-            listingId: inq.listing_id,
+            listingId: targetListingId,
+            listingTitle: targetListingId ? listingTitleMap.get(targetListingId) || null : null,
             source: 'Property inquiry',
             fullName: buyerNameMap.get(inq.buyer_user_id) || 'Prospective Buyer',
             email: null,
             phone: null,
             note: inq.first_intent || inq.handoff_note || null,
             status: (normStatus as ChatLeadItem['status']) || 'new',
-            assignedToUserId: inq.assigned_agent_user_id,
+            assignedToUserId: assignedUserId,
+            assignedAgentName: agentProfile?.fullName || null,
+            assignedAgentAvatarUrl: agentProfile?.avatarUrl || null,
             createdByUserId: inq.company_user_id || inq.agency_user_id || inq.buyer_user_id,
             createdAt: inq.created_at,
-            masterLeadStatus: inq.master_lead_status,
+            masterLeadStatus: inq.master_lead_status || normStatus || 'new',
           });
         }
       });
@@ -195,8 +295,15 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
   // Realtime subscription on crm_leads & dashboard_crm_entries
   useEffect(() => {
     if (!currentUser) return;
+    const channelName = `delchat-leads-${currentUser.id}`;
+    const existing = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+    );
+    if (existing) {
+      void supabase.removeChannel(existing);
+    }
     const channel = supabase
-      .channel(`delchat-leads-${currentUser.id}`)
+      .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_leads' }, () => {
         fetchAllLeads();
       })
@@ -216,7 +323,9 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSavingChatLeadId(leadId);
       setChatLeads((prev) =>
-        prev.map((l) => (l.id === leadId ? { ...l, status: nextStatus } : l))
+        prev.map((l) =>
+          l.id === leadId ? { ...l, status: nextStatus, masterLeadStatus: nextStatus } : l
+        )
       );
 
       try {
@@ -230,6 +339,7 @@ export function useLeadsData(currentUser: any, currentProfile: AppProfile | null
           .update({
             inquiry_status:
               nextStatus === 'converted' ? 'closed' : nextStatus === 'closed_lost' ? 'lost' : nextStatus,
+            master_lead_status: nextStatus,
             updated_at: new Date().toISOString(),
           })
           .eq('id', leadId);

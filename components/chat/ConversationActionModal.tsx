@@ -32,6 +32,7 @@ interface ConversationActionModalProps {
   onClearConversation?: (conversationId: string) => void;
   onBlockUser?: (conversation: ChatConversation) => void;
   onTogglePin?: (conversationId: string) => void;
+  onToggleFavorite?: (conversationId: string, currentFavorited: boolean) => void;
 }
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -49,6 +50,7 @@ export default function ConversationActionModal({
   onClearConversation,
   onBlockUser,
   onTogglePin,
+  onToggleFavorite,
 }: ConversationActionModalProps) {
   const [recentMessages, setRecentMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,10 +63,16 @@ export default function ConversationActionModal({
 
       (async () => {
         try {
-          const { data } = await supabase
+          let query = supabase
             .from('chat_messages')
             .select('id, sender_user_id, body, created_at, message_kind')
-            .eq('conversation_id', conversation.id)
+            .eq('conversation_id', conversation.id);
+
+          if (conversation.clearedHistoryAt) {
+            query = query.gt('created_at', conversation.clearedHistoryAt);
+          }
+
+          const { data } = await query
             .order('created_at', { ascending: false })
             .limit(10);
 
@@ -285,17 +293,24 @@ export default function ConversationActionModal({
               />
             </TouchableOpacity>
 
-            {/* 4. Add to Favourites */}
+            {/* 4. Add / Remove from Favourites */}
             <TouchableOpacity
               activeOpacity={0.65}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 onClose();
+                onToggleFavorite?.(conversation.id, Boolean(conversation.isFavorited));
               }}
               style={styles.menuRow}
             >
-              <Text style={styles.menuRowText}>Add to Favourites</Text>
-              <Ionicons name="heart-outline" size={19} color="#8e8e93" />
+              <Text style={styles.menuRowText}>
+                {conversation.isFavorited ? 'Remove from Favourites' : 'Add to Favourites'}
+              </Text>
+              <Ionicons
+                name={conversation.isFavorited ? 'heart' : 'heart-outline'}
+                size={19}
+                color={conversation.isFavorited ? '#ff2d55' : '#8e8e93'}
+              />
             </TouchableOpacity>
 
             {/* 5. Block / Unblock user */}

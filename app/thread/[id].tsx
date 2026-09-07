@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -37,7 +37,12 @@ import AskAIModal from '../../components/chat/AskAIModal';
 import StarredMessagesModal from '../../components/chat/StarredMessagesModal';
 import ManageAssignmentModal from '../../components/chat/ManageAssignmentModal';
 import LeadInternalNotesModal from '../../components/chat/LeadInternalNotesModal';
+import LeadCaptureModal from '../../components/chat/LeadCaptureModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
+import ChatToast from '../../components/chat/ChatToast';
+import ChatListingBanner from '../../components/chat/ChatListingBanner';
+import MasterLeadSubHeader, { MasterLeadSubTab } from '../../components/chat/crm/MasterLeadSubHeader';
+import MasterLeadDetailsView from '../../components/chat/crm/MasterLeadDetailsView';
 
 // Domain Hooks (Clean Architecture)
 import { useThreadPresence } from '../../hooks/useThreadPresence';
@@ -73,23 +78,36 @@ const STATUS_PIPELINE = [
  * 5. Media Pipeline: Delegated to `useThreadMedia` inserting into `chat_message_attachments` (e.g. `from('chat_message_attachments').insert`) with cloud storage upload via `uploadLocalFileToSupabaseStorage`.
  */
 export default function ThreadScreen() {
-  const params = useLocalSearchParams<{ id: string; title?: string; partnerName?: string }>();
+  const params = useLocalSearchParams<{ id: string; title?: string; partnerName?: string; partnerSubtitle?: string }>();
   const conversationId = params.id;
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
   const flatListRef = useRef<FlatList>(null);
+  const [masterLeadSubTab, setMasterLeadSubTab] = useState<MasterLeadSubTab>('feed');
 
   // 1. Modals state machine (12 boolean flags replaced with discriminated union)
   const modals = useThreadModals();
+
+  const initialSubtitle =
+    (params.partnerSubtitle as string) ||
+    (params.title as string) ||
+    '';
 
   // 2. Session, BOLA authorization, profile identity & lead management
   const session = useThreadSession({
     conversationId,
     partnerNameParam: params.partnerName,
     titleParam: params.title,
+    partnerSubtitleParam: initialSubtitle,
   });
+
+  const effectiveSubtitle =
+    session.conversation?.listing?.title ||
+    session.conversation?.partnerSubtitle ||
+    initialSubtitle ||
+    'DeltanHub Direct';
 
   // 3. Realtime presence & typing synchronization
   const {
@@ -104,7 +122,7 @@ export default function ThreadScreen() {
     currentUserId: session.currentUser?.id || null,
     partnerUserId: session.conversation?.partnerUserId || null,
     initialLastSeenAt: session.conversation?.partnerLastSeenAt || null,
-    fallbackSubtitle: session.conversation?.partnerSubtitle || 'DeltanHub Direct',
+    fallbackSubtitle: effectiveSubtitle,
   });
 
   // 4. Messages lifecycle, keyset pagination, CDC realtime & reactions
@@ -112,6 +130,7 @@ export default function ThreadScreen() {
     conversationId,
     currentUser: session.currentUser,
     partnerName: session.conversation?.partnerName || params.partnerName,
+    partnerUserId: session.conversation?.partnerUserId || null,
     ensureParticipantAuthorization: session.ensureParticipantAuthorization,
     clearPartnerTyping,
     sendTyping,
@@ -121,12 +140,33 @@ export default function ThreadScreen() {
   const media = useThreadMedia({
     conversationId,
     currentUser: session.currentUser,
+    partnerUserId: session.conversation?.partnerUserId || null,
     ensureParticipantAuthorization: session.ensureParticipantAuthorization,
     onMediaSent: messages.fetchMessages,
     onAddOptimisticMessage: messages.addOptimisticMessage,
     onUpdateOptimisticMessage: messages.updateOptimisticMessage,
     onRemoveOptimisticMessage: messages.removeOptimisticMessage,
   });
+
+  // Agent–Buyer Privacy Guard: Firm oversight only sees pre-delegation history unless sharing is enabled
+  const isCompanyViewer = canAssignAgents(session.currentProfile?.mainRole);
+  const isLeadAssigned = Boolean(
+    session.conversation?.assignment?.assignedAgentUserId ||
+    session.conversation?.assignment?.agent
+  );
+  const isPrivateAgentChat =
+    isCompanyViewer &&
+    isLeadAssigned &&
+    session.conversation?.assignment?.agentShareEnabled === false;
+
+  const displayMessages = useMemo(() => {
+    if (!isPrivateAgentChat) return messages.messages;
+    const assignedAtTime = session.conversation?.assignment?.assignedAt
+      ? new Date(session.conversation.assignment.assignedAt).getTime()
+      : null;
+    if (!assignedAtTime) return [];
+    return messages.messages.filter((m) => new Date(m.sentAt).getTime() <= assignedAtTime);
+  }, [messages.messages, isPrivateAgentChat, session.conversation?.assignment?.assignedAt]);
 
   // WebRTC Calling Launchers
   const startCall = useCallback(
@@ -187,34 +227,56 @@ export default function ThreadScreen() {
         <ChatHeader
           partnerName={session.conversation?.partnerName || params.partnerName || 'Loading...'}
           partnerAvatarUrl={session.conversation?.partnerAvatarUrl || null}
-          subtitle={session.conversation?.partnerSubtitle || 'DeltanHub Direct'}
+          subtitle={effectiveSubtitle}
           isTyping={isPartnerTyping}
           isOnline={isPartnerOnline}
           lastSeenText={lastSeenText}
-          canSendMessages={true}
+          canSendMessages={!session.conversation?.isBlocked}
+          isArchived={Boolean(session.conversation?.isArchived)}
+          isMuted={Boolean(session.conversation?.isMuted)}
+          isBlocked={Boolean(session.conversation?.isBlocked)}
           onBack={() => router.back()}
           onAudioCall={() => startCall('audio')}
           onVideoCall={() => startCall('video')}
           onOpenChatInfo={() => modals.openModal('chat_info')}
           onViewStarred={() => modals.openModal('starred')}
           onOpenInternalNotes={() => modals.openModal('internal_notes')}
-          onAddAsLead={session.handleConvertToLead}
+          onAddAsLead={() => modals.openModal('lead_capture')}
           onToggleArchive={session.handleToggleArchive}
           onToggleMute={session.handleToggleMute}
           onToggleBlock={session.handleToggleBlock}
           onReportAgent={() => modals.openModal('report')}
           onManageAssignment={() => modals.openModal('assignment')}
-          canManageAssignment={canAssignAgents(session.currentProfile?.mainRole)}
+          canManageAssignment={Boolean(session.conversation?.canAssignAgents)}
           hasAssignment={Boolean(session.conversation?.assignment)}
           isGroup={session.conversation?.isGroup || false}
           participantCount={session.conversation?.participantCount}
         />
 
+        {/* In-App Non-Blocking Feedback Toast */}
+        <ChatToast message={session.toastMessage} onDismiss={session.dismissToast} />
+
         {/* Realtime Network Connectivity & Delta-Sync Banner */}
         <ConnectionBanner />
 
-        {/* In-Thread Lead Management Strip */}
-        {session.conversation?.assignment && (
+        {/* Linked Listing Context Card (DeltanHub Web Parity: chats-workspace.tsx:L4538) */}
+        {session.conversation?.listing ? (
+          <ChatListingBanner listing={session.conversation.listing} />
+        ) : null}
+
+        {/* Master Lead Workspace SubHeader for Agencies & Developers */}
+        {session.conversation?.canAssignAgents && session.conversation?.assignment ? (
+          <MasterLeadSubHeader
+            conversation={session.conversation}
+            activeSubTab={masterLeadSubTab}
+            onChangeSubTab={setMasterLeadSubTab}
+            onPressStatus={() => modals.openModal('lead_status')}
+            onPressAgent={() => modals.openModal('assignment')}
+            notesCount={session.notesCount}
+            reportsCount={session.reportsCount}
+          />
+        ) : session.conversation?.assignment && session.conversation.assignment.assignedAgentUserId === session.currentUser?.id ? (
+          /* Assigned Lead Strip for Assigned Agent */
           <View
             style={[
               styles.leadStripContainer,
@@ -246,7 +308,7 @@ export default function ThreadScreen() {
                   >
                     <View style={[styles.leadStripStatusDot, { backgroundColor: statusMeta.color }]} />
                     <Text style={[styles.leadStripStatusText, { color: statusMeta.color }]}>
-                      {statusMeta.label.toUpperCase()}
+                      ASSIGNED LEAD: {statusMeta.label.toUpperCase()}
                     </Text>
                     <Ionicons
                       name="chevron-down"
@@ -258,120 +320,85 @@ export default function ThreadScreen() {
                 );
               })()}
 
-              {/* Assignment / Broker Controls */}
               <View style={styles.leadStripActions}>
-                {canAssignAgents(session.currentProfile?.mainRole) ? (
-                  <TouchableOpacity
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      modals.openModal('assignment');
-                    }}
-                    style={[
-                      styles.leadStripPillBtn,
-                      { backgroundColor: isDark ? '#262626' : colors.primarySoft },
-                    ]}
-                  >
-                    <Ionicons
-                      name={
-                        session.conversation.assignment.assignedAgentUserId
-                          ? 'person'
-                          : 'person-add-outline'
-                      }
-                      size={13}
-                      color={colors.primary}
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text style={[styles.leadStripPillText, { color: colors.primary }]} numberOfLines={1}>
-                      {session.conversation.assignment.assignedAgentUserId
-                        ? session.conversation.assignment.assignedAgentName
-                        : 'Assign Agent'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : session.conversation.assignment.assignedAgentUserId === session.currentUser?.id ? (
-                  <View
-                    style={[
-                      styles.leadStripPillBtn,
-                      { backgroundColor: isDark ? '#064e3b' : '#ecfdf5' },
-                    ]}
-                  >
-                    <Ionicons
-                      name="shield-checkmark"
-                      size={13}
-                      color="#10b981"
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text style={[styles.leadStripPillText, { color: '#10b981', fontWeight: '700' }]}>
-                      Assigned to You
-                    </Text>
-                  </View>
-                ) : null}
+                <View
+                  style={[
+                    styles.leadStripPillBtn,
+                    { backgroundColor: isDark ? '#064e3b' : '#ecfdf5' },
+                  ]}
+                >
+                  <Ionicons
+                    name="shield-checkmark"
+                    size={13}
+                    color="#10b981"
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.leadStripPillText, { color: '#10b981', fontWeight: '700' }]}>
+                    Assigned to You
+                  </Text>
+                </View>
 
                 {/* Confidential Lead Notes Button */}
-                {(canAssignAgents(session.currentProfile?.mainRole) ||
-                  session.conversation.assignment.assignedAgentUserId === session.currentUser?.id) && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      modals.openModal('internal_notes');
-                    }}
-                    style={[
-                      styles.leadStripIconBtn,
-                      { backgroundColor: isDark ? '#262626' : '#f1f5f9' },
-                    ]}
-                    accessibilityLabel="Confidential internal notes"
-                  >
-                    <Ionicons name="lock-closed-outline" size={14} color={colors.text} />
-                  </TouchableOpacity>
-                )}
+                <TouchableOpacity
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    modals.openModal('internal_notes');
+                  }}
+                  style={[
+                    styles.leadStripIconBtn,
+                    { backgroundColor: isDark ? '#262626' : '#f1f5f9' },
+                  ]}
+                  accessibilityLabel="Confidential internal notes"
+                >
+                  <Ionicons name="lock-closed-outline" size={14} color={colors.text} />
+                </TouchableOpacity>
               </View>
             </View>
 
             {/* Assigned Agent Share Control Row */}
-            {session.conversation.assignment.assignedAgentUserId === session.currentUser?.id && (
-              <TouchableOpacity
-                onPress={session.handleToggleInThreadAgentShare}
+            <TouchableOpacity
+              onPress={session.handleToggleInThreadAgentShare}
+              style={[
+                styles.leadStripShareBanner,
+                {
+                  backgroundColor: session.conversation.assignment.agentShareEnabled
+                    ? isDark
+                      ? '#064e3b'
+                      : '#ecfdf5'
+                    : isDark
+                    ? '#1f2937'
+                    : '#f8fafc',
+                  borderColor: session.conversation.assignment.agentShareEnabled
+                    ? '#10b981'
+                    : colors.border,
+                },
+              ]}
+            >
+              <Ionicons
+                name={session.conversation.assignment.agentShareEnabled ? 'eye' : 'eye-off'}
+                size={13}
+                color={
+                  session.conversation.assignment.agentShareEnabled
+                    ? '#10b981'
+                    : colors.placeholder
+                }
+                style={{ marginRight: 6 }}
+              />
+              <Text
                 style={[
-                  styles.leadStripShareBanner,
+                  styles.leadStripShareText,
                   {
-                    backgroundColor: session.conversation.assignment.agentShareEnabled
-                      ? isDark
-                        ? '#064e3b'
-                        : '#ecfdf5'
-                      : isDark
-                      ? '#1f2937'
-                      : '#f8fafc',
-                    borderColor: session.conversation.assignment.agentShareEnabled
+                    color: session.conversation.assignment.agentShareEnabled
                       ? '#10b981'
-                      : colors.border,
+                      : colors.placeholder,
                   },
                 ]}
               >
-                <Ionicons
-                  name={session.conversation.assignment.agentShareEnabled ? 'eye' : 'eye-off'}
-                  size={13}
-                  color={
-                    session.conversation.assignment.agentShareEnabled
-                      ? '#10b981'
-                      : colors.placeholder
-                  }
-                  style={{ marginRight: 6 }}
-                />
-                <Text
-                  style={[
-                    styles.leadStripShareText,
-                    {
-                      color: session.conversation.assignment.agentShareEnabled
-                        ? '#10b981'
-                        : colors.placeholder,
-                    },
-                  ]}
-                >
-                  {session.conversation.assignment.agentShareEnabled
-                    ? 'Thread shared with Agency Principal'
-                    : 'Private thread (Tap to share with Agency)'}
-                </Text>
-              </TouchableOpacity>
-            )}
+                {session.conversation.assignment.agentShareEnabled
+                  ? 'Thread shared with Agency Principal'
+                  : 'Private thread (Tap to share with Agency)'}
+              </Text>
+            </TouchableOpacity>
 
             {/* Manager Handoff Note Box */}
             {session.conversation.assignment.handoffNote ? (
@@ -400,92 +427,241 @@ export default function ThreadScreen() {
               </View>
             ) : null}
           </View>
-        )}
+        ) : null}
 
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={0}
-        >
-          {/* Messages Feed */}
-          {messages.loadingMessages ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages.messages}
-              keyExtractor={(item) => item.id}
-              inverted
-              onEndReached={messages.loadMoreMessages}
-              onEndReachedThreshold={0.35}
-              initialNumToRender={20}
-              maxToRenderPerBatch={15}
-              windowSize={11}
-              removeClippedSubviews={Platform.OS === 'android'}
-              ListFooterComponent={
-                messages.loadingMore ? (
-                  <View style={{ paddingVertical: 14, alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                  </View>
-                ) : null
+        {/* Master Lead Workspace Sub-View or Live Chat Feed */}
+        {masterLeadSubTab !== 'feed' && session.conversation && canAssignAgents(session.currentProfile?.mainRole) ? (
+          <MasterLeadDetailsView
+            conversation={session.conversation}
+            messages={messages.messages}
+            activeSubTab={masterLeadSubTab}
+            onOpenInternalNotes={() => modals.openModal('internal_notes')}
+            onNotesCountChange={() => {
+              if (session.conversation?.assignment?.leadId) {
+                session.fetchInquiryCounts(session.conversation.assignment.leadId);
               }
-              renderItem={({ item }) => (
-                <MessageBubble
-                  message={item}
-                  isCurrentUser={item.senderUserId === session.currentUser?.id}
-                  isStarred={messages.starredMsgIds.has(item.id)}
-                  onLongPressMessage={(msg: ChatMessage) => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    modals.openActionModal(msg);
-                  }}
-                  onReactToMessage={messages.handleReactToMessage}
-                  onPressMedia={(url: string, kind: string) =>
-                    media.openMediaViewer(url, kind === 'video' ? 'video' : 'image')
-                  }
-                  onSendInquiryResponse={messages.handleSendInquiryResponse}
-                />
-              )}
-              contentContainerStyle={[
-                styles.messagesContent,
-                { paddingBottom: 16, paddingTop: 12 },
-              ]}
-            />
-          )}
-
-          {/* Rate Limit Cooldown Notice */}
-          {messages.rateLimitCooldown && (
-            <View style={styles.rateLimitBanner}>
-              <Ionicons name="hourglass-outline" size={14} color="#d97706" style={{ marginRight: 6 }} />
-              <Text style={styles.rateLimitBannerText}>
-                Sending slowed (rate limit reached) · Auto-retrying...
-              </Text>
-            </View>
-          )}
-
-          {/* Chat Composer */}
-          <ChatComposer
-            value={messages.composerText}
-            onChangeText={(text) => {
-              messages.setComposerText(text);
-              handleComposerTextChange(text);
             }}
-            onSend={messages.handleSendMessage}
-            onSendVoiceNote={media.handleSendVoiceNote}
-            onSelectAttachment={handleSelectAttachment}
-            replyingToMessage={
-              messages.replyingToMessage
-                ? {
-                    id: messages.replyingToMessage.id,
-                    authorName: messages.replyingToMessage.authorName,
-                    body: messages.replyingToMessage.body,
-                  }
-                : null
-            }
-            onCancelReply={() => messages.setReplyingToMessage(null)}
+            onReportsCountChange={() => {
+              if (session.conversation?.assignment?.leadId) {
+                session.fetchInquiryCounts(session.conversation.assignment.leadId);
+              }
+            }}
           />
-        </KeyboardAvoidingView>
+        ) : (
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={0}
+          >
+            {/* Messages Feed — WhatsApp Local-First 0ms Instant Rendering */}
+            {messages.loadingMessages && messages.messages.length === 0 ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            ) : isPrivateAgentChat && displayMessages.length === 0 ? (
+              <View style={styles.privacyNoticeContainer}>
+                <View
+                  style={[
+                    styles.privacyNoticeCard,
+                    {
+                      backgroundColor: isDark ? '#261219' : '#fdf6f8',
+                      borderColor: isDark ? '#4a0f1f' : '#efe3e8',
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="shield-checkmark"
+                    size={28}
+                    color={isDark ? '#f4a5b8' : '#4a0f1f'}
+                    style={{ marginBottom: 8 }}
+                  />
+                  <Text style={[styles.privacyNoticeTitle, { color: colors.text }]}>
+                    📍 This listing was assigned to agent{' '}
+                    {session.conversation?.assignment?.assignedAgentName ||
+                      session.conversation?.assignment?.agent?.fullName ||
+                      'the agent'}{' '}
+                    from creation.
+                  </Text>
+                  <Text style={[styles.privacyNoticeSubtitle, { color: colors.placeholder }]}>
+                    Messages exchanged between the buyer and the agent are private by default.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => setMasterLeadSubTab('details')}
+                    style={[styles.privacyNoticeBtn, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={styles.privacyNoticeBtnText}>Go to Lead Details →</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={displayMessages}
+                keyExtractor={(item) => item.id}
+                inverted
+                onEndReached={messages.loadMoreMessages}
+                onEndReachedThreshold={0.35}
+                initialNumToRender={20}
+                maxToRenderPerBatch={15}
+                windowSize={11}
+                removeClippedSubviews={Platform.OS === 'android'}
+                ListHeaderComponent={
+                  isPrivateAgentChat ? (
+                    <View
+                      style={[
+                        styles.delegationNoticeCard,
+                        {
+                          backgroundColor: isDark ? '#1f1f23' : '#ffffff',
+                          borderColor: colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.delegationNoticeText, { color: colors.placeholder }]}>
+                        📍 Lead was delegated to agent{' '}
+                        {session.conversation?.assignment?.assignedAgentName ||
+                          session.conversation?.assignment?.agent?.fullName ||
+                          'the agent'}
+                        {session.conversation?.assignment?.assignedAt
+                          ? ` on ${new Date(session.conversation.assignment.assignedAt).toLocaleString([], {
+                              dateStyle: 'short',
+                              timeStyle: 'short',
+                            })}`
+                          : ''}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setMasterLeadSubTab('details')}
+                        style={[styles.delegationNoticeBtn, { backgroundColor: colors.primary }]}
+                      >
+                        <Text style={styles.delegationNoticeBtnText}>Go to Lead Details →</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null
+                }
+                ListFooterComponent={
+                  messages.loadingMore ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    </View>
+                  ) : isPrivateAgentChat ? (
+                    <View
+                      style={[
+                        styles.preDelegationBanner,
+                        {
+                          backgroundColor: isDark ? '#261219' : '#fdf6f8',
+                          borderColor: isDark ? '#4a0f1f' : '#efe3e8',
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.preDelegationBannerText, { color: isDark ? '#f4a5b8' : '#5f5360' }]}>
+                        💬 Below is the message history prior to agent delegation.
+                      </Text>
+                    </View>
+                  ) : null
+                }
+                renderItem={({ item }) => (
+                  <MessageBubble
+                    message={item}
+                    isCurrentUser={item.senderUserId === session.currentUser?.id}
+                    isStarred={messages.starredMsgIds.has(item.id)}
+                    onLongPressMessage={(msg: ChatMessage) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      modals.openActionModal(msg);
+                    }}
+                    onReactToMessage={messages.handleReactToMessage}
+                    onPressMedia={(url: string, kind: string) =>
+                      media.openMediaViewer(url, kind === 'video' ? 'video' : 'image')
+                    }
+                    onSendInquiryResponse={messages.handleSendInquiryResponse}
+                  />
+                )}
+                contentContainerStyle={[
+                  styles.messagesContent,
+                  { paddingBottom: 16, paddingTop: 12 },
+                ]}
+              />
+            )}
+
+            {/* Rate Limit Cooldown Notice */}
+            {messages.rateLimitCooldown && (
+              <View style={styles.rateLimitBanner}>
+                <Ionicons name="hourglass-outline" size={14} color="#d97706" style={{ marginRight: 6 }} />
+                <Text style={styles.rateLimitBannerText}>
+                  Sending slowed (rate limit reached) · Auto-retrying...
+                </Text>
+              </View>
+            )}
+
+            {/* Chat Composer, Blocked Notice, or Private Agent Thread Notice */}
+            {session.conversation?.isBlocked ? (
+              <View
+                style={[
+                  styles.privacyComposerBar,
+                  {
+                    backgroundColor: isDark ? '#1a1012' : '#fef2f2',
+                    borderTopColor: isDark ? '#7f1d1d' : '#fecaca',
+                    paddingVertical: 14,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="ban"
+                  size={15}
+                  color={isDark ? '#f87171' : '#dc2626'}
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={[styles.privacyComposerText, { color: isDark ? '#fca5a5' : '#b91c1c' }]}>
+                  {session.conversation.blockedByMe
+                    ? 'You have blocked this contact. Tap menu to unblock.'
+                    : 'This contact is currently unavailable for direct messages.'}
+                </Text>
+              </View>
+            ) : isPrivateAgentChat ? (
+              <View
+                style={[
+                  styles.privacyComposerBar,
+                  {
+                    backgroundColor: isDark ? '#1a0d13' : '#fdf6f8',
+                    borderTopColor: isDark ? '#4a0f1f' : '#efe3e8',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="lock-closed"
+                  size={14}
+                  color={isDark ? '#f4a5b8' : '#4a0f1f'}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.privacyComposerText, { color: isDark ? '#f4a5b8' : '#5f5360' }]}>
+                  Private agent thread · Delegated to{' '}
+                  {session.conversation?.assignment?.assignedAgentName ||
+                    session.conversation?.assignment?.agent?.fullName ||
+                    'agent'}
+                </Text>
+              </View>
+            ) : (
+              <ChatComposer
+                value={messages.composerText}
+                onChangeText={(text) => {
+                  messages.setComposerText(text);
+                  handleComposerTextChange(text);
+                }}
+                onSend={messages.handleSendMessage}
+                onSendVoiceNote={media.handleSendVoiceNote}
+                onSelectAttachment={handleSelectAttachment}
+                replyingToMessage={
+                  messages.replyingToMessage
+                    ? {
+                        id: messages.replyingToMessage.id,
+                        authorName: messages.replyingToMessage.authorName,
+                        body: messages.replyingToMessage.body,
+                      }
+                    : null
+                }
+                onCancelReply={() => messages.setReplyingToMessage(null)}
+              />
+            )}
+          </KeyboardAvoidingView>
+        )}
 
         {/* Message Action Sheet Modal */}
         <MessageActionModal
@@ -511,9 +687,17 @@ export default function ThreadScreen() {
           conversation={session.conversation}
           messagesCount={messages.messages.length}
           onClose={modals.closeModal}
-          onAddAsLead={session.handleConvertToLead}
+          onAddAsLead={() => modals.openModal('lead_capture')}
           onToggleArchive={session.handleToggleArchive}
           onViewStarred={() => modals.openModal('starred')}
+        />
+
+        {/* Lead Capture Modal (DeltanHub Web LeadCaptureDialog Parity) */}
+        <LeadCaptureModal
+          visible={modals.isLeadCaptureVisible}
+          onClose={modals.closeModal}
+          initialFullName={session.conversation?.partnerName || ''}
+          onSubmit={session.handleConvertToLead}
         />
 
         {/* Media Preview Modal */}
@@ -843,5 +1027,96 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: Typography.fontFamily,
     marginLeft: 8,
+  },
+  privacyNoticeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  privacyNoticeCard: {
+    padding: 24,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 340,
+  },
+  privacyNoticeTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    marginBottom: 6,
+    lineHeight: 20,
+  },
+  privacyNoticeSubtitle: {
+    fontSize: 12,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  privacyNoticeBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 20,
+  },
+  privacyNoticeBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  delegationNoticeCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  delegationNoticeText: {
+    fontSize: 12,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  delegationNoticeBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  delegationNoticeBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  preDelegationBanner: {
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  preDelegationBannerText: {
+    fontSize: 12,
+    fontFamily: Typography.fontFamily,
+    textAlign: 'center',
+  },
+  privacyComposerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  privacyComposerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
   },
 });

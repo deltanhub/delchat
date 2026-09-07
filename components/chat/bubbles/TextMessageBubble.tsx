@@ -67,7 +67,7 @@ export default function TextMessageBubble({
       layout={LinearTransition.springify().damping(16)}
       style={[styles.rowContainer, isCurrentUser ? styles.justifyRight : styles.justifyLeft]}
     >
-      <View style={{ maxWidth: '82%', alignItems: isCurrentUser ? 'flex-end' : 'flex-start' }}>
+      <View style={{ maxWidth: '78%', alignItems: isCurrentUser ? 'flex-end' : 'flex-start' }}>
         {/* Reactions Popover Menu (Long-press triggered) */}
         {showReactionPopover && (
           <View
@@ -126,7 +126,13 @@ export default function TextMessageBubble({
           ]}
         >
           {!isCurrentUser && (
-            <Text style={[styles.authorLabel, { color: isDark ? '#ffffff' : colors.primary }]}>{message.authorName}</Text>
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[styles.authorLabel, { color: isDark ? '#ffffff' : colors.primary }]}
+            >
+              {message.authorName}
+            </Text>
           )}
 
           {staffTag && (
@@ -429,7 +435,8 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   bubbleTextContainer: {
-    maxWidth: '75%',
+    minWidth: 84,
+    maxWidth: '100%',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 16,

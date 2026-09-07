@@ -156,7 +156,7 @@ export default function AskAIModal({
             <View style={[styles.header, { borderBottomColor: isDark ? '#27272a' : colors.border }]}>
               <View style={styles.headerTitleRow}>
                 <View style={[styles.sparkleBadge, { backgroundColor: isDark ? '#3d1624' : '#fcedf2' }]}>
-                  <Ionicons name="sparkles" size={16} color={colors.primary} />
+                  <Ionicons name="sparkles" size={16} color={isDark ? '#f4a5b8' : colors.primary} />
                 </View>
                 <View>
                   <Text style={[styles.headerTitle, { color: colors.text }]}>Deltan Intelligence</Text>
@@ -180,7 +180,7 @@ export default function AskAIModal({
                   },
                 ]}
               >
-                <Text style={[styles.contextLabel, { color: colors.primary }]}>
+                <Text style={[styles.contextLabel, { color: isDark ? '#f4a5b8' : colors.primary }]}>
                   Referenced Message:
                 </Text>
                 <Text style={[styles.contextText, { color: colors.text }]} numberOfLines={3}>
@@ -202,8 +202,8 @@ export default function AskAIModal({
                       },
                     ]}
                   >
-                    <Ionicons name={action.icon} size={14} color={colors.primary} style={{ marginRight: 6 }} />
-                    <Text style={[styles.chipText, { color: colors.primary }]}>{action.title}</Text>
+                    <Ionicons name={action.icon} size={14} color={isDark ? '#f4a5b8' : colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.chipText, { color: isDark ? '#f4a5b8' : colors.primary }]}>{action.title}</Text>
                   </ScalePressable>
                 ))}
               </View>
@@ -253,8 +253,8 @@ export default function AskAIModal({
                   ]}
                 >
                   <View style={styles.responseHeaderRow}>
-                    <Ionicons name="sparkles" size={14} color={colors.primary} />
-                    <Text style={[styles.responseHeaderTitle, { color: colors.primary }]}>
+                    <Ionicons name="sparkles" size={14} color={isDark ? '#f4a5b8' : colors.primary} />
+                    <Text style={[styles.responseHeaderTitle, { color: isDark ? '#f4a5b8' : colors.primary }]}>
                       Suggested Answer
                     </Text>
                   </View>

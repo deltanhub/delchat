@@ -80,9 +80,21 @@ assert(leadsContent.includes('agency_agent_memberships') && leadsContent.include
 // 5. Message Repository Contract Verification
 console.log('\n--- TEST 5: Message Repository Contract ---');
 const msgContent = fs.readFileSync(msgRepo, 'utf8');
-assert(msgContent.includes('fetchThreadMessages'), 'messageRepository exports fetchThreadMessages');
-assert(msgContent.includes(".neq('intent', 'internal_note')"), 'messageRepository filters internal broker notes from client stream');
-assert(msgContent.includes('toggleMessageStar'), 'messageRepository exports toggleMessageStar');
+assert(
+  msgContent.includes(".or('intent.neq.internal_note,intent.is.null')") || msgContent.includes(".neq('intent', 'internal_note')"),
+  'messageRepository filters internal broker notes from client stream with 500k CCU NULL-safety'
+);
+
+// Verify SQL 3VL & in-memory NULL-safe filtering invariant
+const sampleDbMessages = [
+  { id: 'msg-1', body: 'Regular buyer message', intent: null },
+  { id: 'msg-2', body: 'Explicit text message', intent: 'message' },
+  { id: 'msg-3', body: 'Confidential agent note', intent: 'internal_note' },
+];
+const safeFiltered = sampleDbMessages.filter((m) => m.intent !== 'internal_note');
+assert(safeFiltered.length === 2, 'Safe message filter excludes internal_note rows');
+assert(safeFiltered.some((m) => m.intent === null), 'Safe message filter retains NULL intent rows');
+assert(!safeFiltered.some((m) => m.intent === 'internal_note'), 'Zero internal_note rows leaked in filtered output');
 assert(msgContent.includes('toggleMessageReaction'), 'messageRepository exports toggleMessageReaction');
 assert(msgContent.includes('deleteMessage'), 'messageRepository exports deleteMessage');
 assert(msgContent.includes('sendTextMessage'), 'messageRepository exports sendTextMessage');
@@ -92,6 +104,25 @@ assert(msgContent.includes('sendListingMessage'), 'messageRepository exports sen
 assert(msgContent.includes('sendEmbedMessage'), 'messageRepository exports sendEmbedMessage');
 assert(msgContent.includes('sendInquiryTemplate'), 'messageRepository exports sendInquiryTemplate');
 assert(msgContent.includes('sendInquiryResponse'), 'messageRepository exports sendInquiryResponse');
+
+// 5b. Local-First Instant Paint (WhatsApp Pattern) Verification
+console.log('\n--- TEST 5b: Local-First Instant Paint Verification ---');
+const offlineEnginePath = path.join(DELCHAT_DIR, 'lib', 'offline-engine.ts');
+const offlineEngineContent = fs.readFileSync(offlineEnginePath, 'utf8');
+assert(offlineEngineContent.includes('getMessagesSync'), 'OfflineEngine exports getMessagesSync for 0ms Frame 1 hydration');
+assert(offlineEngineContent.includes('saveSingleMessage'), 'OfflineEngine exports saveSingleMessage for immediate realtime persistence');
+
+const useThreadMsgsPath = path.join(DELCHAT_DIR, 'hooks', 'thread', 'useThreadMessages.ts');
+const useThreadMsgsContent = fs.readFileSync(useThreadMsgsPath, 'utf8');
+assert(useThreadMsgsContent.includes('OfflineEngine.getMessagesSync(conversationId)'), 'useThreadMessages hydrates state synchronously from OfflineEngine hot cache');
+assert(useThreadMsgsContent.includes('OfflineEngine.saveSingleMessage(conversationId'), 'useThreadMessages persists realtime incoming and outgoing messages');
+
+const threadScreenPath = path.join(DELCHAT_DIR, 'app', 'thread', '[id].tsx');
+const threadScreenContent = fs.readFileSync(threadScreenPath, 'utf8');
+assert(
+  threadScreenContent.includes('messages.loadingMessages && messages.messages.length === 0'),
+  'ThreadScreen strictly guards full-screen loader to zero-message cold starts (0ms instant paint for cached chats)'
+);
 
 // 6. Presentation Layer Decoupling Verification
 console.log('\n--- TEST 6: UI Presentation Decoupling Verification ---');

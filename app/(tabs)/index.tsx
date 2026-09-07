@@ -12,7 +12,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { useRouter, type Href } from 'expo-router';
+import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,7 +37,7 @@ import RecentCallsList from '../../components/chat/RecentCallsList';
 import SyncCoordinator from '../../lib/sync-coordinator';
 import { useChatPinGate } from '../../components/chat/security/ChatPinGateProvider';
 
-export type InboxTab = 'all' | 'calls' | 'master-leads' | 'assigned-leads' | 'leads' | 'support' | 'archived';
+export type InboxTab = 'all' | 'calls' | 'master-leads' | 'assigned-leads' | 'leads' | 'favourites' | 'support' | 'archived';
 
 export default function InboxScreen() {
   const router = useRouter();
@@ -115,6 +115,12 @@ export default function InboxScreen() {
       void OfflineEngine.saveConversations(sorted);
       void setCachedConversations(sorted);
       SyncCoordinator.setStatus('online');
+
+      // Stamp delivery for unread conversations so senders get grey double-ticks (matching DeltanHub web mobile standard)
+      const unreadConvs = sorted.filter((c) => (c.unreadCount || 0) > 0);
+      unreadConvs.forEach((c) => {
+        void conversationRepository.markConversationDelivered(c.id);
+      });
     } catch (e: any) {
       console.warn('Error loading conversations', e);
       if (e?.message?.includes('network') || e?.message?.includes('Failed to fetch')) {
@@ -142,6 +148,7 @@ export default function InboxScreen() {
     } else {
       tabs.push({ key: 'leads', label: 'Inquiries' });
     }
+    tabs.push({ key: 'favourites', label: 'Favourites' });
     tabs.push({ key: 'support', label: 'Support' });
     tabs.push({ key: 'archived', label: 'Archived' });
     return tabs;
@@ -183,21 +190,43 @@ export default function InboxScreen() {
     }
   }, [currentUser, fetchConversations]);
 
+  // Synchronize conversations whenever screen regains focus (e.g. returning from thread)
+  useFocusEffect(
+    useCallback(() => {
+      if (currentUser) {
+        OfflineEngine.getConversations().then((richCached) => {
+          if (richCached && richCached.length > 0) {
+            setConversations(richCached);
+          }
+        });
+        fetchConversations();
+      }
+    }, [currentUser, fetchConversations])
+  );
+
   // 3. Realtime inbox sync (targeted user-scoped notifications & participant changes with debouncing)
   useEffect(() => {
     if (!currentUser) return;
 
-    const triggerDebouncedFetch = () => {
+    const triggerDebouncedFetch = (delay = 400) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         fetchConversations();
-      }, 1200);
+      }, delay);
     };
 
     // User-scoped channel: eliminates global chat_messages broadcast storm
+    const channelName = `inbox-sync-${currentUser.id}`;
+    const existing = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+    );
+    if (existing) {
+      void supabase.removeChannel(existing);
+    }
+
     const updateChannel = supabase
-      .channel(`inbox-sync-${currentUser.id}`)
-      // 1. In-app notification received for this user
+      .channel(channelName)
+      // 1. In-app notification received for this user (instant fetch)
       .on(
         'postgres_changes',
         {
@@ -207,10 +236,10 @@ export default function InboxScreen() {
           filter: `user_id=eq.${currentUser.id}`,
         },
         () => {
-          triggerDebouncedFetch();
+          fetchConversations();
         }
       )
-      // 2. Participant row updated (read receipts, pinned status, archive) for this user
+      // 2. Participant row updated (read receipts, pinned status, archive) for this user (debounced 1200ms guard)
       .on(
         'postgres_changes',
         {
@@ -220,12 +249,12 @@ export default function InboxScreen() {
           filter: `user_id=eq.${currentUser.id}`,
         },
         () => {
-          triggerDebouncedFetch();
+          triggerDebouncedFetch(1200);
         }
       )
-      // 3. User-targeted broadcast alert
+      // 3. User-targeted broadcast alert (instant fetch)
       .on('broadcast', { event: 'new_message' }, () => {
-        triggerDebouncedFetch();
+        fetchConversations();
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
@@ -238,6 +267,9 @@ export default function InboxScreen() {
       void supabase.removeChannel(updateChannel);
     };
   }, [currentUser, fetchConversations]);
+
+  // Archived conversations count for top folder row
+  const archivedCount = useMemo(() => conversations.filter((c) => c.isArchived).length, [conversations]);
 
   // Filter conversations
   const filteredConversations = conversations.filter((c) => {
@@ -264,7 +296,7 @@ export default function InboxScreen() {
     }
     if (activeTab === 'master-leads') {
       // Publisher side: agency/developer viewing master leads
-      return Boolean(c.assignment && canAssign);
+      return Boolean(c.assignment && (c.canAssignAgents ?? canAssign));
     }
     if (activeTab === 'assigned-leads') {
       // Agent side: leads assigned to this agent
@@ -272,6 +304,9 @@ export default function InboxScreen() {
     }
     if (activeTab === 'leads') {
       return Boolean(c.assignment || c.conversationKind === 'listing_human' || Boolean(c.listing));
+    }
+    if (activeTab === 'favourites') {
+      return Boolean(c.isFavorited);
     }
     if (activeTab === 'support') {
       return c.conversationKind === 'support';
@@ -287,6 +322,7 @@ export default function InboxScreen() {
         id: conversationId,
         partnerName: target?.partnerName || 'Chat',
         title: target?.title || '',
+        partnerSubtitle: target?.partnerSubtitle || target?.listing?.title || '',
       },
     });
   };
@@ -385,6 +421,95 @@ export default function InboxScreen() {
               .update({ removed_at: new Date().toISOString() })
               .eq('conversation_id', conversationId)
               .eq('user_id', currentUser.id);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleToggleFavorite = async (conversationId: string, currentFavorited: boolean) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const willFavorite = !currentFavorited;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId
+            ? { ...c, isFavorited: willFavorite, favoritedAt: willFavorite ? new Date().toISOString() : null }
+            : c
+        )
+      );
+      await conversationRepository.toggleConversationFavorite(conversationId, willFavorite);
+    } catch (e: any) {
+      Alert.alert('Favourites Error', e.message || 'Unable to update favourite status.');
+      fetchConversations();
+    }
+  };
+
+  const handleClearConversation = async (conversationId: string) => {
+    Alert.alert(
+      'Clear Chat Messages',
+      'Are you sure you want to clear all messages in this chat for your account? Your chat history will be cleared.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear Chat',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              const res = await conversationRepository.clearConversationHistory(conversationId, currentUser?.id);
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === conversationId
+                    ? {
+                        ...c,
+                        preview: 'No messages yet',
+                        unreadCount: 0,
+                        clearedHistoryAt: res.clearedHistoryAt,
+                      }
+                    : c
+                )
+              );
+            } catch (e: any) {
+              Alert.alert('Clear Chat Error', e.message || 'Unable to clear conversation history.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleBlockUser = async (conversation: ChatConversation) => {
+    const partnerId = conversation.partnerUserId;
+    if (!partnerId) {
+      Alert.alert('Error', 'Unable to resolve contact to block.');
+      return;
+    }
+    const isCurrentlyBlocked = Boolean(conversation.isBlocked);
+    Alert.alert(
+      isCurrentlyBlocked ? 'Unblock Contact' : 'Block Contact',
+      isCurrentlyBlocked
+        ? `Are you sure you want to unblock ${conversation.partnerName}?`
+        : `Are you sure you want to block ${conversation.partnerName}? They will not be able to message or call you.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: isCurrentlyBlocked ? 'Unblock' : 'Block',
+          style: isCurrentlyBlocked ? 'default' : 'destructive',
+          onPress: async () => {
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              const blocked = await conversationRepository.toggleChatUserBlock(partnerId);
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.partnerUserId === partnerId
+                    ? { ...c, isBlocked: blocked, blockedByMe: blocked }
+                    : c
+                )
+              );
+            } catch (e: any) {
+              Alert.alert('Block Error', e.message || 'Unable to update contact block state.');
+            }
           },
         },
       ]
@@ -584,6 +709,34 @@ export default function InboxScreen() {
             maxToRenderPerBatch={10}
             windowSize={11}
             removeClippedSubviews={Platform.OS === 'android'}
+            ListHeaderComponent={
+              archivedCount > 0 && activeTab !== 'archived' && !searchQuery.trim() ? (
+                <ScalePressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setActiveTab('archived');
+                  }}
+                  style={[
+                    styles.archivedFolderRow,
+                    {
+                      backgroundColor: isDark ? '#161616' : '#ffffff',
+                      borderBottomColor: isDark ? '#262626' : '#e7edf3',
+                    },
+                  ]}
+                >
+                  <View style={[styles.archivedIconCircle, { backgroundColor: isDark ? '#262626' : '#f0f4f9' }]}>
+                    <Ionicons name="archive-outline" size={20} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={[styles.archivedFolderTitle, { color: colors.text }]}>Archived</Text>
+                    <Text style={[styles.archivedFolderSubtitle, { color: colors.placeholder }]}>
+                      {archivedCount} archived chat{archivedCount > 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.placeholder} />
+                </ScalePressable>
+              ) : null
+            }
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -621,6 +774,9 @@ export default function InboxScreen() {
           onToggleMute={(id, cur) => handleToggleMute(id, cur)}
           onMarkReadToggle={(id, cur) => handleMarkReadToggle(id, cur)}
           onTogglePin={(id) => handleTogglePin(id)}
+          onToggleFavorite={(id, cur) => handleToggleFavorite(id, cur)}
+          onClearConversation={(id) => handleClearConversation(id)}
+          onBlockUser={(conv) => handleBlockUser(conv)}
           onDeleteConversation={(id) => handleDeleteConversation(id)}
         />
 
@@ -761,5 +917,29 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xs,
     fontFamily: Typography.fontFamily,
     fontWeight: '600',
+  },
+  archivedFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  archivedIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  archivedFolderTitle: {
+    fontSize: Typography.sizes.md,
+    fontFamily: Typography.fontFamily,
+    fontWeight: '700',
+  },
+  archivedFolderSubtitle: {
+    fontSize: Typography.sizes.xs,
+    fontFamily: Typography.fontFamily,
+    marginTop: 2,
   },
 });

@@ -99,6 +99,13 @@ export function useThreadPresence({
     }
 
     // 1. Realtime Presence Channel: presence:${conversationId} matching DeltanHub web
+    const presenceChannelName = `presence:${conversationId}`;
+    const existingPresence = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${presenceChannelName}` || (ch as any).subTopic === presenceChannelName
+    );
+    if (existingPresence) {
+      void supabase.removeChannel(existingPresence);
+    }
     const presenceChannel = supabase.channel(`presence:${conversationId}`, {
       config: { presence: { key: currentUserId } },
     });
@@ -130,6 +137,13 @@ export function useThreadPresence({
       });
 
     // 2. Realtime Typing Broadcast Channel: chat-typing:${conversationId} matching DeltanHub web
+    const typingChannelName = `chat-typing:${conversationId}`;
+    const existingTyping = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${typingChannelName}` || (ch as any).subTopic === typingChannelName
+    );
+    if (existingTyping) {
+      void supabase.removeChannel(existingTyping);
+    }
     const typingChannel = supabase.channel(`chat-typing:${conversationId}`);
     typingChannelRef.current = typingChannel;
 

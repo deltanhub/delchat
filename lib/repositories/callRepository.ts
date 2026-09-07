@@ -1,5 +1,6 @@
 import { supabase } from '../supabase';
 import { fetchWithAuth } from '../api-client';
+import { dispatchVoipCallPush, dispatchVoipCallCancellation } from '../services/voipPushService';
 
 export type ChatCallMode = 'audio' | 'video';
 export type ChatCallStatus =
@@ -404,4 +405,257 @@ export const callRepository = {
       return '';
     }
   },
+
+  /**
+   * Create a call session in chat_call_sessions and initialize participants.
+   */
+  async createCallSession(params: {
+    conversationId: string;
+    initiatorUserId: string;
+    callMode: 'audio' | 'video';
+  }): Promise<{ sessionId: string; invitedUserIds: string[] } | null> {
+    const { conversationId, initiatorUserId, callMode } = params;
+    const expiresAt = new Date(Date.now() + 90000).toISOString();
+
+    // Pre-emptively clear any stale or lingering active sessions for this conversation
+    // to prevent duplicate key violations of chat_call_sessions_one_active_per_conversation_idx.
+    try {
+      await supabase
+        .from('chat_call_sessions')
+        .update({
+          call_status: 'canceled',
+          ended_at: new Date().toISOString(),
+          end_reason: 'superseded_by_new_call',
+        })
+        .eq('conversation_id', conversationId)
+        .in('call_status', ['ringing', 'accepted']);
+    } catch {
+      // Non-blocking cleanup attempt
+    }
+
+    let { data: session, error: sessionErr } = await supabase
+      .from('chat_call_sessions')
+      .insert({
+        conversation_id: conversationId,
+        initiated_by_user_id: initiatorUserId,
+        call_mode: callMode,
+        call_status: 'ringing',
+        expires_at: expiresAt,
+      })
+      .select('id')
+      .single();
+
+    // If a collision occurs due to in-flight state or network lag, sweep again and retry once
+    if (
+      sessionErr &&
+      (sessionErr.code === '23505' ||
+        sessionErr.message?.includes('chat_call_sessions_one_active_per_conversation_idx') ||
+        sessionErr.message?.includes('duplicate key'))
+    ) {
+      console.warn('[callRepository] Active call session collision detected. Retrying after session cleanup...');
+      await supabase
+        .from('chat_call_sessions')
+        .update({
+          call_status: 'canceled',
+          ended_at: new Date().toISOString(),
+          end_reason: 'superseded_by_new_call',
+        })
+        .eq('conversation_id', conversationId)
+        .in('call_status', ['ringing', 'accepted']);
+
+      const retryResult = await supabase
+        .from('chat_call_sessions')
+        .insert({
+          conversation_id: conversationId,
+          initiated_by_user_id: initiatorUserId,
+          call_mode: callMode,
+          call_status: 'ringing',
+          expires_at: expiresAt,
+        })
+        .select('id')
+        .single();
+
+      session = retryResult.data;
+      sessionErr = retryResult.error;
+    }
+
+    if (sessionErr || !session) {
+      console.warn('[callRepository] Failed to create call session:', sessionErr?.message);
+      throw sessionErr || new Error('Failed to create call session');
+    }
+
+    // Resolve conversation participants
+    const { data: convParticipants } = await supabase
+      .from('chat_participants')
+      .select('user_id')
+      .eq('conversation_id', conversationId)
+      .is('removed_at', null);
+
+    const participants = convParticipants || [];
+    const invitedUserIds = participants
+      .filter((p: any) => p.user_id !== initiatorUserId)
+      .map((p: any) => p.user_id);
+
+    if (participants.length > 0) {
+      await supabase.from('chat_call_participants').upsert(
+        participants.map((p: any) => ({
+          call_id: session.id,
+          conversation_id: conversationId,
+          user_id: p.user_id,
+          participant_status: p.user_id === initiatorUserId ? 'accepted' : 'invited',
+          is_initiator: p.user_id === initiatorUserId,
+          joined_at: p.user_id === initiatorUserId ? new Date().toISOString() : null,
+        }))
+      );
+    }
+
+    return {
+      sessionId: session.id,
+      invitedUserIds,
+    };
+  },
+
+  /**
+   * Fetch active ringing or accepted call session for deep-link situations.
+   */
+  async fetchActiveCallSession(conversationId: string): Promise<{
+    id: string;
+    callMode: 'audio' | 'video';
+    callStatus: string;
+    initiatorUserId: string;
+  } | null> {
+    try {
+      const { data: session } = await supabase
+        .from('chat_call_sessions')
+        .select('id, call_mode, call_status, initiated_by_user_id')
+        .eq('conversation_id', conversationId)
+        .in('call_status', ['ringing', 'accepted'])
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!session) return null;
+      return {
+        id: session.id,
+        callMode: session.call_mode === 'video' ? 'video' : 'audio',
+        callStatus: session.call_status,
+        initiatorUserId: session.initiated_by_user_id,
+      };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Broadcast incoming call notification to recipients with guaranteed channel removal.
+   * Eliminates channel memory leaks on the Supabase client.
+   */
+  broadcastIncomingCallNotification(
+    invitedUserIds: string[],
+    payload: {
+      callId: string;
+      conversationId: string;
+      callMode: 'audio' | 'video';
+      callerUserId: string;
+      callerName: string;
+      callerAvatarUrl: string | null;
+    }
+  ): void {
+    // Concurrently trigger native APNs VoIP PushKit & Android FCM High-Priority Data Messages
+    void dispatchVoipCallPush({
+      callId: payload.callId,
+      conversationId: payload.conversationId,
+      recipientUserIds: invitedUserIds,
+      callerId: payload.callerUserId,
+      callerName: payload.callerName,
+      callerAvatarUrl: payload.callerAvatarUrl,
+      callKind: payload.callMode,
+    });
+
+    invitedUserIds.forEach((targetUserId) => {
+      const channelName = `user-call-listener-${targetUserId}`;
+      const existing = supabase.getChannels().find(
+        (ch) => ch.topic === `realtime:${channelName}` || (ch as any).subTopic === channelName
+      );
+      if (existing) {
+        void supabase.removeChannel(existing);
+      }
+      const notifyChannel = supabase.channel(channelName);
+
+      let teardownTimer: any = null;
+      const cleanupChannel = () => {
+        if (teardownTimer) clearTimeout(teardownTimer);
+        void supabase.removeChannel(notifyChannel);
+      };
+
+      // Safety timeout: teardown after 3000ms if subscriber never connects
+      teardownTimer = setTimeout(cleanupChannel, 3000);
+
+      notifyChannel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void notifyChannel
+            .send({
+              type: 'broadcast',
+              event: 'incoming_call',
+              payload,
+            })
+            .finally(() => {
+              // Guaranteed teardown after broadcast packet dispatch
+              setTimeout(cleanupChannel, 400);
+            });
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          cleanupChannel();
+        }
+      });
+    });
+  },
+
+  /**
+   * Update call session in chat_call_sessions.
+   */
+  async updateCallSession(
+    callId: string,
+    updates: {
+      callStatus?: string;
+      endedAt?: string;
+      endedByUserId?: string;
+      endReason?: string;
+      durationSeconds?: number;
+      acceptedAt?: string;
+    }
+  ): Promise<void> {
+    const payload: Record<string, any> = {};
+    if (updates.callStatus) payload.call_status = updates.callStatus;
+    if (updates.endedAt) payload.ended_at = updates.endedAt;
+    if (updates.endedByUserId) payload.ended_by_user_id = updates.endedByUserId;
+    if (updates.endReason) payload.end_reason = updates.endReason;
+    if (typeof updates.durationSeconds === 'number') payload.duration_seconds = updates.durationSeconds;
+    if (updates.acceptedAt) payload.accepted_at = updates.acceptedAt;
+
+    await supabase.from('chat_call_sessions').update(payload).eq('id', callId);
+  },
+
+  /**
+   * Update participant status in chat_call_participants.
+   */
+  async updateParticipantStatus(
+    callId: string,
+    userId: string,
+    status: string,
+    timestamp?: { field: 'joined_at' | 'left_at'; value: string }
+  ): Promise<void> {
+    const payload: Record<string, any> = {
+      participant_status: status,
+    };
+    if (timestamp) {
+      payload[timestamp.field] = timestamp.value;
+    }
+
+    await supabase
+      .from('chat_call_participants')
+      .update(payload)
+      .eq('call_id', callId)
+      .eq('user_id', userId);
+  },
 };
+

@@ -235,12 +235,41 @@ node scripts/test_role_permissions.js
   - `node scripts/test_role_permissions.js` -> 10/10 PASSED (Exit Code 0)
   - `node scripts/run_master_system_audit.js` -> 106/106 PASSED (Exit Code 0)
 
+### Phase 7: Master Leads & Assigned Leads Role Synchronization (COMPLETED)
+- **What Was Done**:
+  1. `lib/repositories/conversationRepository.ts`: Enforced viewer role guard (`isViewerProfessional = canReceiveLeads(currentProfile?.mainRole)`) to suppress `assignmentObj` for Buyer accounts.
+  2. `components/chat/ConversationRow.tsx`: Integrated role-aware badge titling (`conversation.canAssignAgents ? 'Master Lead' : 'Assigned Lead'`) and agent chip rendering.
+  3. `components/leads/ChatLeadsView.tsx`: Fixed sub-tab partitioning (Master Leads = delegated leads, My Leads = unassigned/direct).
+  4. `scripts/test_master_leads_architecture.js`: Created and executed 16/16 test suite.
+- **Why It Was Done**:
+  Guarantees real estate agency leadership and assigned agents see exact role-segregated leads with zero data leaks to consumer buyers.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` &rarr; Exit Code 0
+  - `node scripts/test_master_leads_architecture.js` &rarr; 16/16 PASSED (Exit Code 0)
+  - `node scripts/run_master_system_audit.js` &rarr; 132/132 PASSED (Exit Code 0)
+
+### Phase 8: Master Lead Thread Workspace & Buyer Privacy Guard (COMPLETED)
+- **What Was Done**:
+  1. `hooks/thread/useThreadSession.ts`: Added `canReceiveLeads(profile?.mainRole)` guard to prevent exposing internal lead inquiry data or agent assignment state to consumer buyers.
+  2. `components/chat/crm/MasterLeadSubHeader.tsx` & `components/chat/crm/MasterLeadDetailsView.tsx`: Built dedicated thread workspace controls visible only when viewer is a real estate professional (`session.assignment != null`).
+  3. `scripts/test_master_leads_architecture.js`: Expanded to 21 tests with Suite 6 verifying thread workspace and privacy suppression.
+- **Why It Was Done**:
+  Guarantees consumer buyers cannot inspect internal agency CRM assignment status, response times, or staff notes while interacting with an agency or developer.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` &rarr; Exit Code 0
+  - `node scripts/test_master_leads_architecture.js` &rarr; 21/21 PASSED (Exit Code 0)
+  - `node scripts/test_role_permissions.js` &rarr; 10/10 PASSED (Exit Code 0)
+  - `node scripts/run_master_system_audit.js` &rarr; 136/136 PASSED (Exit Code 0)
+
 ---
 
 ## 7. What Is Left To Be Done
-All core phases of Role-Based Authentication, Profile Identity & Granular Permissions are **100% complete and certified operational**:
+
+All core Role-Based Authentication, Granular Permissions, Master Leads, and Assigned Leads features are **100% complete and certified operational**:
 1. Leads CRM & Chat Inquiries Screen Decomposition ([`app/(tabs)/leads.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/app/(tabs)/leads.tsx)) is **100% COMPLETED** into modular sub-components under `components/leads/` and `components/inquiries/` with route guards strictly preserved.
 2. Strict Domain Typing & Zero-Any Cleanliness is **100% COMPLETED** with zero `as any` type escapes across all role and permissions handling.
-3. Monitor live end-user feedback on mobile devices across Agency, Developer, Agent, Landlord/Owner, and Buyer test accounts.
-4. Proceed to Stage 3 App Store Native Compilation (`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`).
+3. Master Lead & Assigned Lead Thread Workspace Parity is **100% COMPLETED** with strict buyer privacy protection.
+4. Monitor live end-user feedback on mobile devices across Agency, Developer, Agent, Landlord/Owner, and Buyer test accounts.
+5. Proceed to Stage 3 App Store Native Compilation (`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`).
+
 

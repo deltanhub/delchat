@@ -16,6 +16,8 @@ export interface ChatLeadItem {
   createdAt: string;
   masterLeadStatus?: string | null;
   listingTitle?: string | null;
+  assignedAgentName?: string | null;
+  assignedAgentAvatarUrl?: string | null;
 }
 
 export interface ManualLeadItem {

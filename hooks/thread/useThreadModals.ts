@@ -18,7 +18,9 @@ export type ThreadModalType =
   | 'internalNotes'
   | 'internal_notes'
   | 'leadStatus'
-  | 'lead_status';
+  | 'lead_status'
+  | 'leadCapture'
+  | 'lead_capture';
 
 export interface OpenModalOptions {
   actionMessage?: ChatMessage | null;
@@ -69,6 +71,7 @@ export function useThreadModals() {
     isAssignmentVisible: activeModal === 'assignment',
     isInternalNotesVisible: activeModal === 'internalNotes' || activeModal === 'internal_notes',
     isLeadStatusVisible: activeModal === 'leadStatus' || activeModal === 'lead_status',
+    isLeadCaptureVisible: activeModal === 'leadCapture' || activeModal === 'lead_capture',
     isModalOpen: (type: ThreadModalType) => activeModal === type,
     openModal,
     closeModal,

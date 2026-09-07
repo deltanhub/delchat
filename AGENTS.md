@@ -2,12 +2,15 @@
 
 > **MANDATORY MASTER BLUEPRINT PROTOCOL**:
 > Before writing or modifying any code or configuration in this repository, you MUST read:
-> 1. [`DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md) (The active master blueprint for Anti-Spaghetti code, Clean Architecture & screen deconstruction)
-> 2. [`DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md) (The active blueprint for Role-Based Authentication, Profile Identity & Granular Permissions)
-> 3. [`DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md) (The active 5-phase Clean Architecture & Anti-Spaghetti refactoring blueprint)
-> 4. [`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md) (The active 3-stage operational go-live deployment plan: Stage 1 Infrastructure -> Stage 2 Credentials -> Stage 3 Native Compilation)
-> 5. [`DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md) (The completed 5-phase architectural remediation plan)
-> 6. [`DELCHAT_ENGINEERING_BLUEPRINT.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ENGINEERING_BLUEPRINT.md) (The comprehensive engineering architecture and failure inventory)
+> 1. [`DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md) (The active master blueprint for Master Leads, Assigned Leads, and CRM data partitioning)
+> 2. [`DELCHAT_REALTIME_LIFECYCLE_AND_CALL_LOGS_REMEDIATION_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_REALTIME_LIFECYCLE_AND_CALL_LOGS_REMEDIATION_PLAN.md) (The active blueprint for Supabase Realtime channel deduplication, lifecycle immunity & call logs CDC collision guard)
+> 3. [`DELCHAT_500K_CCU_VOIP_AND_CALLING_MASTER_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_500K_CCU_VOIP_AND_CALLING_MASTER_PLAN.md) (The active master blueprint for 500k CCU VoIP calling, WebRTC media engine & calling UI/UX)
+> 4. [`DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md) (The active master blueprint for Anti-Spaghetti code, Clean Architecture & screen deconstruction)
+> 5. [`DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md) (The active blueprint for Role-Based Authentication, Profile Identity & Granular Permissions)
+> 6. [`DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md) (The active 5-phase Clean Architecture & Anti-Spaghetti refactoring blueprint)
+> 7. [`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md) (The active 3-stage operational go-live deployment plan: Stage 1 Infrastructure -> Stage 2 Credentials -> Stage 3 Native Compilation)
+> 8. [`DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md) (The completed 5-phase architectural remediation plan)
+> 9. [`DELCHAT_ENGINEERING_BLUEPRINT.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/DELCHAT_ENGINEERING_BLUEPRINT.md) (The comprehensive engineering architecture and failure inventory)
 >
 > **Senior Engineer Live Smoke Test Protocol (Mandatory Before and After Any Change)**:
 > Every agent in every thread MUST execute a live smoke test before making any modification AND before declaring any change complete:
@@ -16,10 +19,10 @@
 > 3. Clean Architecture Audit: `node scripts/test_clean_architecture.js` (54/54 tests pass required)
 > 4. Presence Sync Audit: `node scripts/test_presence_sync.js` (100% pass required)
 > 5. Role & Permissions Audit: `node scripts/test_role_permissions.js` (10/10 tests pass required)
-> 6. Master System Verification: `node scripts/run_master_system_audit.js` (106/106 tests pass required)
+> 6. Master System Verification: `node scripts/run_master_system_audit.js` (all tests pass required)
 >
 > **Mandatory Update Protocol**:
-> After completing any phase or sub-phase, you MUST update `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`, `DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md`, `DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md`, `DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`, `DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md`, and `DELCHAT_ENGINEERING_BLUEPRINT.md` detailing:
+> After completing any phase or sub-phase, you MUST update `DELCHAT_REALTIME_LIFECYCLE_AND_CALL_LOGS_REMEDIATION_PLAN.md`, `DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md`, `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`, `DELCHAT_CLEAN_ARCHITECTURE_REFACTORING_PLAN.md`, `DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md`, `DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`, `DELCHAT_500K_CCU_ENTERPRISE_REMEDIATION_PLAN.md`, and `DELCHAT_ENGINEERING_BLUEPRINT.md` detailing:
 > - **What was done** (specific files and line numbers modified)
 > - **Why it was done** (technical rationale and architectural justification)
 > - **Smoke test results & proof** (exact command output, exit code 0)
@@ -186,3 +189,54 @@ Before making any changes:
 
 Check the "What Is Left To Be Done" section in `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md` and execute the next pending phase without introducing spaghetti code, breaking existing clean architecture contracts, or regressing any UI/calling features. After execution, re-run all smoke tests, verify exit code 0, and update `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md` detailing what was done, why it was done, smoke test proof, and next steps.
 ```
+
+---
+
+## 9. Master Resume Prompt for 500k CCU VoIP & Audio/Video Calling
+
+Whenever opening a new chat thread to continue or verify the 500k CCU VoIP & Audio/Video Calling remediation, copy and paste this exact prompt:
+
+```markdown
+Resume the DelChat 500k CCU VoIP & Audio/Video Calling implementation by strictly consulting:
+1. `DELCHAT_500K_CCU_VOIP_AND_CALLING_MASTER_PLAN.md`
+2. `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`
+3. `AGENTS.md`
+
+Before making any changes:
+1. Act as the Senior Engineer and run the Mandatory Live Smoke Test Suite:
+   - `cmd /c npx tsc --noEmit`
+   - `node scripts/run_comprehensive_audit.js`
+   - `node scripts/test_clean_architecture.js`
+   - `node scripts/test_presence_sync.js`
+   - `node scripts/test_role_permissions.js`
+   - `node scripts/run_master_system_audit.js`
+
+```
+
+---
+
+## 10. Master Resume Prompt for Master Leads & Assigned Leads Architecture
+
+Whenever opening a new chat thread to continue or verify Master Leads and Assigned Leads architecture, copy and paste this exact prompt:
+
+```markdown
+Resume the DelChat Master Leads and Assigned Leads implementation by strictly consulting:
+1. `DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md`
+2. `DELCHAT_ROLE_BASED_AUTHENTICATION_AND_PERMISSIONS_PLAN.md`
+3. `DELCHAT_ANTI_SPAGHETTI_AND_CLEAN_ARCHITECTURE_MASTER_PLAN.md`
+4. `AGENTS.md`
+
+Before making any changes:
+1. Act as the Senior Engineer and run the Mandatory Live Smoke Test Suite:
+   - `cmd /c npx tsc --noEmit`
+   - `node scripts/run_comprehensive_audit.js`
+   - `node scripts/test_clean_architecture.js`
+   - `node scripts/test_presence_sync.js`
+   - `node scripts/test_role_permissions.js`
+   - `node scripts/test_master_leads_architecture.js`
+   - `node scripts/run_master_system_audit.js`
+
+Check the "What Is Left To Be Done" section in `DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md` and execute the next pending phase without introducing spaghetti code, breaking existing clean architecture contracts, or regressing any UI/calling features. After execution, re-run all smoke tests, verify exit code 0, and update `DELCHAT_MASTER_LEADS_AND_ASSIGNED_LEADS_ARCHITECTURE_PLAN.md` detailing what was done, why it was done, smoke test proof, and next steps.
+```
+
+

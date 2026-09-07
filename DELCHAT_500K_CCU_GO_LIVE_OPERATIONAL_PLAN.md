@@ -218,6 +218,27 @@
     - Android: `eas build -p android --profile production`
     - iOS: `eas build -p ios --profile production`
 
+### [Log Entry: 2026-09-07] EAS Development Build Client Provisioning & Verification
+* **Author**: Antigravity Senior Systems Architect & Mobile Infrastructure Lead
+* **What Was Done**:
+  - Installed `expo-dev-client` (`~57.0.18`) into [`delchat/package.json`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/package.json) via `npx expo install expo-dev-client`.
+  - Verified package installation and resolution compatibility with Expo SDK 57, React 19.2.3, and React Native 0.86.3.
+  - Verified development build profile in [`delchat/eas.json`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/eas.json) (`developmentClient: true`, `distribution: internal`).
+  - Verified Android application package (`com.deltanhub.delchat`), iOS bundle identifier (`com.deltanhub.delchat`), splash screen (`assets/images/splash-icon.png`), and adaptive icons.
+* **Why It Was Done**:
+  - An EAS development build (`eas build -p android --profile development`) requires the `expo-dev-client` native module in `package.json` to embed the native Expo developer launcher and debug menu into the custom binary.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (zero errors).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Audit: `node scripts/test_clean_architecture.js` -> 60/60 tests passing (100%).
+  - Presence Sync Audit: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role & Permissions Audit: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Run cloud build: `eas build -p android --profile development`.
+
+---
+
 ### [Log Entry: 2026-09-07] Clean Architecture Phase 5: Strict Domain Typing & Zero-Any Cleanliness Complete
 * **Author**: Antigravity Senior Systems Architect & Clean Architecture Lead
 * **What Was Done**:
@@ -774,7 +795,98 @@
   - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
   - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
   - Master System Audit: `node scripts/run_master_system_audit.js` -> 106/106 tests passing (100%).
+
+---
+
+### [Log Entry: 2026-09-07] WebRTC Media Engine, VoIP Calling & 500k CCU Resilience (Phase 7)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - Universal WebRTC Media Engine (`lib/webrtc/mediaEngine.ts`): Opus 48kHz audio, VP8/H.264 720p video, candidate buffering, and 3s connection watchdog with ICE restart renegotiation.
+  - Native VoIP Background Push & Telecom Integration (`lib/voip/callkit.ts`, `lib/voip/connectionService.ts`, `lib/services/voipPushService.ts`): APNs PushKit, Android high-importance notification channel, and lock-screen heads-up controls.
+  - Call Screen Deconstruction (`app/call/[id].tsx`): Shrunk from 466 lines down to 70 lines ($< 250$ line limit) consuming `hooks/useCallSession.ts` with zero direct database queries.
+  - Proximity Sensor Blanking & BT Audio Routing (`lib/voip/proximityService.ts`, `lib/webrtc-audio.ts`, `components/chat/CallModal.tsx`): Zero-touch display blackout during earpiece calls and dynamic earpiece/speaker/Bluetooth routing.
+  - Reconnection Storm Shield (`lib/sync-coordinator.ts`): Randomized jitter ($500-3500\text{ms}$), 30s presence throttling (`PRESENCE_TOUCH_THROTTLE_MS = 30000`), and in-flight request coalescing.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (zero errors).
+  - Phase 5 Resilience Suite: `node scripts/test_phase5_resilience.js` -> 18/18 tests passing (100%).
+  - Dedicated WebRTC Engine: `node scripts/test_webrtc_media_engine.js` -> 30/30 tests passing (100%).
+  - Dedicated VoIP Push & CallKit: `node scripts/test_voip_push_callkit.js` -> 32/32 tests passing (100%).
+  - Call Functionality Suite: `node scripts/test_call_functionality.js` -> 49/49 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 54/54 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 119/119 tests passing (100%).
+
+### [Log Entry: 2026-09-07] UX Feedback Remediation & In-App Toast System (Phase 1)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - `delchat/components/chat/ChatToast.tsx` (92 lines): Built animated Apple-style floating toast pill for smooth feedback.
+  - `delchat/hooks/thread/useThreadSession.ts`:
+    - Eliminated disruptive `Alert.alert` calls on `handleToggleArchive` and `handleToggleMute`.
+    - Integrated optimistic state updates with `showToast` feedback ("Chat archived", "Chat unarchived", "Notifications muted", "Notifications unmuted").
+    - Delegated operations directly to `conversationRepository.toggleConversationArchive` and `conversationRepository.toggleConversationMute`.
+  - `delchat/app/thread/[id].tsx`: Mounted `<ChatToast />` directly beneath `ChatHeader`.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 60/60 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
 * **What Is Left To Be Done**:
-  - Production cloud compilation via `eas build --profile production`.
+  - Phase 3: Production-Grade "Add as Lead" Engine & In-Chat Lead Card (`LeadCaptureModal`).
+  - Phase 4: Manage Assignment Modal UI & Layout Polish.
 
+### [Log Entry: 2026-09-07] Contact Blocking Synchronization with DeltanHub Web (Phase 2)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - `delchat/lib/repositories/conversationRepository.ts`: Added `toggleChatUserBlock` and `checkChatBlockedStatus` querying `public.chat_blocked_users` and atomic RPC `toggle_chat_user_block`.
+  - `delchat/hooks/thread/useThreadSession.ts`: Mapped `isBlocked` and `blockedByMe` in `fetchConversationDetails`. Refactored `handleToggleBlock` to seamlessly unblock/block with `showToast` notifications.
+  - `delchat/app/thread/[id].tsx`: Passed `isBlocked` to `ChatHeader`, guarded `canSendMessages`, and rendered blocked privacy banner replacing composer.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 60/60 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Phase 4: Manage Assignment Modal UI & Layout Polish.
 
+### [Log Entry: 2026-09-07] Production-Grade "Add as Lead" Engine & In-Chat Lead Card (Phase 3)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - `delchat/components/chat/LeadCaptureModal.tsx`: Created native bottom-sheet modal matching DeltanHub web's `LeadCaptureDialog`.
+  - `delchat/hooks/thread/useThreadModals.ts`: Added `'leadCapture' | 'lead_capture'` modal state.
+  - `delchat/lib/repositories/leadsRepository.ts`: Implemented `captureLead` with dual execution (/api/chats/lead server endpoint + direct Supabase `crm_leads` insertion with valid constraints and `message_kind: 'lead'` injection).
+  - `delchat/hooks/thread/useThreadSession.ts`: Refactored `handleConvertToLead` to handle modal drafts and display non-blocking toast.
+  - `delchat/app/thread/[id].tsx`: Mounted `<LeadCaptureModal />` and wired header / chat info triggers.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 60/60 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Phase 4: Manage Assignment Modal UI & Layout Polish (COMPLETED).
+
+### [Log Entry: 2026-09-07] Manage Assignment Modal UI Polish & Keyboard Avoidance (Phase 4)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - `delchat/components/chat/ManageAssignmentModal.tsx`:
+    - Eliminated fixed `height: SCREEN_HEIGHT * 0.88` in favor of dynamic `maxHeight: SCREEN_HEIGHT * 0.90`.
+    - Integrated `KeyboardAvoidingView` (`behavior={Platform.OS === 'ios' ? 'padding' : undefined}`) and backdrop with `StyleSheet.absoluteFill`.
+    - Wrapped agent selection list in `listWrapper` (`maxHeight: SCREEN_HEIGHT * 0.40, flexShrink: 1`) and `agentList` (`flexGrow: 0`) to eliminate large dead black space gap when agent count is small.
+    - Replaced blocking system `Alert.alert` calls with responsive inline error banner and tactile haptics.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 60/60 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master Leads Architecture: `node scripts/test_master_leads_architecture.js` -> 31/31 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
+* **What Is Left To Be Done**:
+  - All 4 feedback phases are 100% complete and verified.

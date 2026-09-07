@@ -24,6 +24,7 @@ export interface FetchMessagesParams {
   limit?: number;
   beforeTimestamp?: string | null;
   partnerLastReadTime?: number | null;
+  clearedHistoryAt?: string | null;
 }
 
 export interface FetchMessagesResult {
@@ -120,7 +121,23 @@ export const messageRepository = {
       limit = 30,
       beforeTimestamp,
       partnerLastReadTime,
+      clearedHistoryAt,
     } = params;
+
+    let cutoff = clearedHistoryAt;
+    if (cutoff === undefined && currentUserId) {
+      try {
+        const { data: part } = await supabase
+          .from('chat_participants')
+          .select('cleared_history_at')
+          .eq('conversation_id', conversationId)
+          .eq('user_id', currentUserId)
+          .maybeSingle();
+        cutoff = part?.cleared_history_at || null;
+      } catch {
+        cutoff = null;
+      }
+    }
 
     let query = supabase
       .from('chat_messages')
@@ -130,9 +147,15 @@ export const messageRepository = {
         message_status, delivered_at, read_at
       `)
       .eq('conversation_id', conversationId)
-      .neq('intent', 'internal_note')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      // 500k CCU NULL-Safe Filter: Safely exclude internal notes without dropping NULL-intent messages
+      // (Replacing naive .neq('intent', 'internal_note') which dropped all rows where intent IS NULL due to SQL 3VL)
+      .or('intent.neq.internal_note,intent.is.null');
+
+    if (cutoff) {
+      query = query.gt('created_at', cutoff);
+    }
+
+    query = query.order('created_at', { ascending: false }).limit(limit);
 
     if (beforeTimestamp) {
       query = query.lt('created_at', beforeTimestamp);
@@ -141,7 +164,7 @@ export const messageRepository = {
     const { data: rawMsgRows, error: msgError } = await query;
     if (msgError) throw msgError;
 
-    const msgRows = (rawMsgRows as DbMessageRow[]) || [];
+    const msgRows = ((rawMsgRows as DbMessageRow[]) || []).filter((m) => m.intent !== 'internal_note');
     const hasMore = msgRows.length >= limit;
     const msgIds = msgRows.map((m) => m.id);
 
@@ -314,6 +337,32 @@ export const messageRepository = {
       p_conversation_id: conversationId,
     });
     if (error) throw error;
+  },
+
+  /**
+   * Marks unread messages in conversation delivered atomically via RPC.
+   */
+  async markConversationDelivered(
+    conversationId: string,
+    messageIds?: string[] | null
+  ): Promise<{ success: boolean; messagesDelivered: number }> {
+    try {
+      const { data, error } = await supabase.rpc('mark_chat_conversation_delivered_atomic', {
+        p_conversation_id: conversationId,
+        p_message_ids: messageIds && messageIds.length > 0 ? messageIds : null,
+      });
+      if (error) {
+        console.warn('[messageRepository] markConversationDelivered error:', error.message);
+        return { success: false, messagesDelivered: 0 };
+      }
+      return {
+        success: Boolean(data?.success),
+        messagesDelivered: Number(data?.messages_delivered || 0),
+      };
+    } catch (err: any) {
+      console.warn('[messageRepository] markConversationDelivered catch:', err?.message);
+      return { success: false, messagesDelivered: 0 };
+    }
   },
 
   /**

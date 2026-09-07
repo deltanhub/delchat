@@ -195,6 +195,8 @@ export default function ChatComposer({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  const isSelectingAttachmentRef = useRef(false);
+
   const toggleAttachmentMenu = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Keyboard.dismiss();
@@ -202,10 +204,15 @@ export default function ChatComposer({
   };
 
   const handleAttachmentSelect = (type: ChatAttachmentActionType) => {
+    if (isSelectingAttachmentRef.current) return;
+    isSelectingAttachmentRef.current = true;
     setShowAttachmentMenu(false);
-    if (onSelectAttachment) {
-      onSelectAttachment(type);
-    }
+    setTimeout(() => {
+      isSelectingAttachmentRef.current = false;
+      if (onSelectAttachment) {
+        onSelectAttachment(type);
+      }
+    }, Platform.OS === 'ios' ? 250 : 60);
   };
 
   const handleSendPress = () => {

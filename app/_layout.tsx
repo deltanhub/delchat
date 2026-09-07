@@ -8,6 +8,8 @@ import 'react-native-reanimated';
 import { AppLockProvider } from '../components/AppLockProvider';
 import { ChatPinGateProvider } from '../components/chat/security/ChatPinGateProvider';
 import IncomingCallHUD from '../components/chat/IncomingCallHUD';
+import { callKit } from '../lib/voip/callkit';
+import { connectionService } from '../lib/voip/connectionService';
 
 // Prevent splash screen from auto-hiding before authentication/resources are initialized
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -65,6 +67,20 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
+    // 0. Initialize native VoIP Calling subsystems (CallKit & ConnectionService)
+    void callKit.initializeCallKit(
+      { appName: 'DelChat' },
+      {
+        onAnswerCall: (callUuid) => {
+          console.log('[CallKit] Call answered via native lock screen:', callUuid);
+        },
+        onEndCall: (callUuid) => {
+          console.log('[CallKit] Call ended via native lock screen:', callUuid);
+        },
+      }
+    );
+    void connectionService.initializeConnectionService();
+
     // 1. Listen for foreground notifications (active in standalone/dev builds)
     const foregroundSubscription = !isAndroidExpoGo
       ? Notifications.addNotificationReceivedListener((notification) => {
@@ -80,9 +96,13 @@ export default function RootLayout() {
           const { conversationId, type } = data || {};
 
           if (conversationId) {
-            if (type === 'call') {
+            if (type === 'call' || type === 'incoming_call' || type === 'voip_call_incoming') {
               console.log(`[Push] Deep linking to call screen for conversation: ${conversationId}`);
-              router.push(`/call/${conversationId}?role=receiver` as Href);
+              const callIdParam = data?.callId || data?.id || '';
+              const callModeParam = data?.callMode || data?.kind || data?.callKind || 'audio';
+              router.push(
+                `/call/${conversationId}?role=receiver&callId=${callIdParam}&kind=${callModeParam}` as Href
+              );
             } else {
               console.log(`[Push] Deep linking to chat thread for conversation: ${conversationId}`);
               router.push(`/thread/${conversationId}` as Href);

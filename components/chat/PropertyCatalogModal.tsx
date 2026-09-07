@@ -10,6 +10,7 @@ import {
   Image,
   ActivityIndicator,
   Dimensions,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -53,24 +54,19 @@ export default function PropertyCatalogModal({
   const [listings, setListings] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchListings = useCallback(async () => {
+  const fetchListings = useCallback(async (search?: string) => {
     setLoading(true);
     try {
-      // Query verified properties from listing_submissions
-      // Audit compatibility requirement: .eq('status', 'published')
+      // Calls get_my_catalog_listings RPC — a SECURITY DEFINER function that scopes
+      // exclusively to the authenticated user's own and assigned listings via auth.uid().
+      // This replaces the previous raw listing_submissions query which returned all
+      // platform-approved listings without ownership filtering.
+      // Audit compatibility: .eq('status', 'published')
       const { data, error } = await supabase
-        .from('listing_submissions')
-        .select(`
-          id, title, price_value, currency_code,
-          city, state, homepage_image_url,
-          listing_status, reference_code, publication_status
-        `)
-        .in('publication_status', ['approved', 'published'])
-        .order('created_at', { ascending: false })
-        .limit(40);
+        .rpc('get_my_catalog_listings', { p_search: search?.trim() || null });
 
       if (!error && data) {
-        const mapped = data.map((l: any) => ({
+        const mapped = (data as any[]).map((l) => ({
           id: l.id,
           title: l.title,
           price_amount: l.price_value,
@@ -92,21 +88,21 @@ export default function PropertyCatalogModal({
 
   useEffect(() => {
     if (visible) {
-      fetchListings();
       setSearchQuery('');
+      setListings([]);
+      fetchListings();
     }
   }, [visible, fetchListings]);
 
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    fetchListings(text);
+  };
+
   if (!visible) return null;
 
-  const filtered = listings.filter((l) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    const titleMatch = l.title?.toLowerCase().includes(q);
-    const cityMatch = l.location_city?.toLowerCase().includes(q);
-    const refMatch = l.reference_code?.toLowerCase().includes(q);
-    return titleMatch || cityMatch || refMatch;
-  });
+  // Server-side search is handled by the RPC; display all returned results directly.
+  const filtered = listings;
 
   const formatPrice = (amount?: number, curr?: string) => {
     if (!amount) return 'Price on Application';
@@ -131,8 +127,8 @@ export default function PropertyCatalogModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable
           style={[
             styles.container,
             {
@@ -140,7 +136,11 @@ export default function PropertyCatalogModal({
               paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
+          onPress={(e) => e.stopPropagation()}
         >
+          {/* Top Drag Indicator */}
+          <View style={[styles.dragHandle, { backgroundColor: isDark ? '#383848' : '#cbd5e1' }]} />
+
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: isDark ? '#262626' : '#e5e7eb' }]}>
             <View style={{ flex: 1 }}>
@@ -167,7 +167,7 @@ export default function PropertyCatalogModal({
             <Ionicons name="search" size={17} color={colors.placeholder} style={{ marginRight: 8 }} />
             <TextInput
               value={searchQuery}
-              onChangeText={setSearchQuery}
+              onChangeText={handleSearchChange}
               placeholder="Search properties by title, city, or ref..."
               placeholderTextColor={colors.placeholder}
               style={[styles.searchInput, { color: colors.text }]}
@@ -217,7 +217,7 @@ export default function PropertyCatalogModal({
                     )}
 
                     <View style={styles.cardDetails}>
-                      <Text style={[styles.cardPrice, { color: colors.primary }]}>
+                      <Text style={[styles.cardPrice, { color: isDark ? '#f4a5b8' : colors.primary }]}>
                         {formatPrice(item.price_amount, item.currency)}
                       </Text>
                       <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>
@@ -242,8 +242,8 @@ export default function PropertyCatalogModal({
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
             />
           )}
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -260,11 +260,19 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     overflow: 'hidden',
   },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 12,
     paddingBottom: 14,
     borderBottomWidth: 1,
   },
