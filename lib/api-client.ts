@@ -21,7 +21,17 @@ export async function fetchWithAuth(
   options: RequestInit = {},
   isRetry = false
 ): Promise<any> {
-  const { data: { session } } = await supabase.auth.getSession();
+  let { data: { session } } = await supabase.auth.getSession();
+
+  // Proactively refresh token if expired or about to expire within 60s
+  if (session && session.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+    console.log('[API Client] Proactively refreshing expiring session token...');
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshData?.session) {
+      session = refreshData.session;
+    }
+  }
+
   const token = session?.access_token;
 
   const headers = new Headers(options.headers || {});
@@ -84,7 +94,7 @@ export async function fetchWithAuth(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[API Client] Error response: ${response.status} - ${errorText}`);
+    console.warn(`[API Client] Error response: ${response.status} - ${errorText}`);
     throw new Error(errorText || `Request failed with status ${response.status}`);
   }
 

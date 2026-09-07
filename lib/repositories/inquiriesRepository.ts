@@ -14,16 +14,6 @@ export const inquiriesRepository = {
    */
   async fetchInquiryResponses(): Promise<InquiryResponseItem[]> {
     try {
-      const data = await fetchWithAuth('/api/dashboard/inquiry-responses');
-      if (data && Array.isArray(data.responses)) {
-        return data.responses as InquiryResponseItem[];
-      }
-    } catch (apiErr) {
-      console.warn('[inquiriesRepository] API endpoint fallback for responses:', apiErr);
-    }
-
-    // Direct database fallback
-    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
 
@@ -73,25 +63,25 @@ export const inquiriesRepository = {
         };
       });
     } catch (err) {
-      console.warn('[inquiriesRepository] Failed to fetch inquiry responses:', err);
-      return [];
+      console.warn('[inquiriesRepository] Direct DB fetch failed, trying API fallback:', err);
     }
+
+    try {
+      const data = await fetchWithAuth('/api/dashboard/inquiry-responses');
+      if (data && Array.isArray(data.responses)) {
+        return data.responses as InquiryResponseItem[];
+      }
+    } catch (apiErr) {
+      console.warn('[inquiriesRepository] API endpoint fallback for responses failed:', apiErr);
+    }
+
+    return [];
   },
 
   /**
    * Fetches inquiry form templates (Tour Request & General Inquiry) and their fields.
    */
   async fetchInquiryTemplates(): Promise<ChatInquiryTemplate[]> {
-    try {
-      const data = await fetchWithAuth('/api/dashboard/inquiry-templates');
-      if (data && Array.isArray(data.templates)) {
-        return data.templates as ChatInquiryTemplate[];
-      }
-    } catch (apiErr) {
-      console.warn('[inquiriesRepository] API endpoint fallback for templates:', apiErr);
-    }
-
-    // Direct database fallback
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
@@ -137,27 +127,25 @@ export const inquiriesRepository = {
         fields: fieldsByTemplate.get(t.id) || [],
       }));
     } catch (err) {
-      console.warn('[inquiriesRepository] Failed to fetch inquiry templates:', err);
-      return [];
+      console.warn('[inquiriesRepository] Direct DB template fetch failed, trying API fallback:', err);
     }
+
+    try {
+      const data = await fetchWithAuth('/api/dashboard/inquiry-templates');
+      if (data && Array.isArray(data.templates)) {
+        return data.templates as ChatInquiryTemplate[];
+      }
+    } catch (apiErr) {
+      console.warn('[inquiriesRepository] API endpoint fallback for templates failed:', apiErr);
+    }
+
+    return [];
   },
 
   /**
    * Creates a template record if it does not already exist.
    */
   async ensureTemplate(trigger: FormTrigger, title: string, description?: string): Promise<string | null> {
-    try {
-      const res = await fetchWithAuth('/api/dashboard/inquiry-templates', {
-        method: 'POST',
-        body: JSON.stringify({
-          intentTrigger: trigger,
-          title,
-          description: description || null,
-        }),
-      });
-      if (res?.id) return res.id;
-    } catch {}
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
@@ -183,11 +171,24 @@ export const inquiriesRepository = {
         .select('id')
         .single();
 
-      return created?.id || null;
+      if (created?.id) return created.id;
     } catch (err) {
-      console.error('[inquiriesRepository] Failed to ensure template:', err);
-      return null;
+      console.warn('[inquiriesRepository] Direct DB ensureTemplate failed, trying API fallback:', err);
     }
+
+    try {
+      const res = await fetchWithAuth('/api/dashboard/inquiry-templates', {
+        method: 'POST',
+        body: JSON.stringify({
+          intentTrigger: trigger,
+          title,
+          description: description || null,
+        }),
+      });
+      if (res?.id) return res.id;
+    } catch {}
+
+    return null;
   },
 
   /**
@@ -197,14 +198,6 @@ export const inquiriesRepository = {
     templateId: string,
     patch: { title?: string; description?: string | null; isActive?: boolean }
   ): Promise<void> {
-    try {
-      await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
-      });
-      return;
-    } catch {}
-
     const dbPatch: Record<string, unknown> = {};
     if (patch.title !== undefined) dbPatch.title = patch.title;
     if (patch.description !== undefined) dbPatch.description = patch.description;
@@ -214,7 +207,18 @@ export const inquiriesRepository = {
       .from('chat_inquiry_templates')
       .update(dbPatch)
       .eq('id', templateId);
-    if (error) throw error;
+
+    if (error) {
+      console.warn('[inquiriesRepository] Direct DB updateTemplateMeta failed, trying API fallback:', error);
+      try {
+        await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        });
+        return;
+      } catch {}
+      throw error;
+    }
   },
 
   /**
@@ -224,6 +228,34 @@ export const inquiriesRepository = {
     templateId: string,
     field: Omit<ChatInquiryTemplateField, 'id' | 'templateId'>
   ): Promise<ChatInquiryTemplateField | null> {
+    const { data: inserted, error } = await supabase
+      .from('chat_inquiry_template_fields')
+      .insert({
+        template_id: templateId,
+        field_name: field.fieldName,
+        field_label: field.fieldLabel,
+        field_type: field.fieldType,
+        options: field.options,
+        is_required: field.isRequired,
+        sort_order: field.sortOrder,
+      })
+      .select('*')
+      .single();
+
+    if (!error && inserted) {
+      return {
+        id: inserted.id,
+        templateId,
+        fieldName: inserted.field_name,
+        fieldLabel: inserted.field_label,
+        fieldType: inserted.field_type,
+        options: inserted.options,
+        isRequired: inserted.is_required,
+        sortOrder: inserted.sort_order,
+      };
+    }
+
+    console.warn('[inquiriesRepository] Direct DB createTemplateField failed, trying API fallback:', error);
     try {
       const res = await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}/fields`, {
         method: 'POST',
@@ -249,31 +281,7 @@ export const inquiriesRepository = {
       }
     } catch {}
 
-    const { data: inserted, error } = await supabase
-      .from('chat_inquiry_template_fields')
-      .insert({
-        template_id: templateId,
-        field_name: field.fieldName,
-        field_label: field.fieldLabel,
-        field_type: field.fieldType,
-        options: field.options,
-        is_required: field.isRequired,
-        sort_order: field.sortOrder,
-      })
-      .select('*')
-      .single();
-
-    if (error || !inserted) throw error || new Error('Failed to insert field');
-    return {
-      id: inserted.id,
-      templateId,
-      fieldName: inserted.field_name,
-      fieldLabel: inserted.field_label,
-      fieldType: inserted.field_type,
-      options: inserted.options,
-      isRequired: inserted.is_required,
-      sortOrder: inserted.sort_order,
-    };
+    throw error || new Error('Failed to insert field');
   },
 
   /**
@@ -284,14 +292,6 @@ export const inquiriesRepository = {
     fieldId: string,
     patch: Partial<ChatInquiryTemplateField>
   ): Promise<void> {
-    try {
-      await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}/fields/${fieldId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
-      });
-      return;
-    } catch {}
-
     const dbPatch: Record<string, unknown> = {};
     if (patch.fieldLabel !== undefined) dbPatch.field_label = patch.fieldLabel;
     if (patch.fieldName !== undefined) dbPatch.field_name = patch.fieldName;
@@ -304,24 +304,38 @@ export const inquiriesRepository = {
       .from('chat_inquiry_template_fields')
       .update(dbPatch)
       .eq('id', fieldId);
-    if (error) throw error;
+
+    if (error) {
+      console.warn('[inquiriesRepository] Direct DB updateTemplateField failed, trying API fallback:', error);
+      try {
+        await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}/fields/${fieldId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        });
+        return;
+      } catch {}
+      throw error;
+    }
   },
 
   /**
    * Deletes a field from a template.
    */
   async deleteTemplateField(templateId: string, fieldId: string): Promise<void> {
-    try {
-      await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}/fields/${fieldId}`, {
-        method: 'DELETE',
-      });
-      return;
-    } catch {}
-
     const { error } = await supabase
       .from('chat_inquiry_template_fields')
       .delete()
       .eq('id', fieldId);
-    if (error) throw error;
+
+    if (error) {
+      console.warn('[inquiriesRepository] Direct DB deleteTemplateField failed, trying API fallback:', error);
+      try {
+        await fetchWithAuth(`/api/dashboard/inquiry-templates/${templateId}/fields/${fieldId}`, {
+          method: 'DELETE',
+        });
+        return;
+      } catch {}
+      throw error;
+    }
   },
 };
