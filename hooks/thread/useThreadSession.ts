@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { supabase } from '../../../lib/supabase';
-import { getCurrentProfile, canAssignAgents, UserProfile } from '../../../lib/auth';
-import { resolveAvatarUrl, resolveListingImageUrl } from '../../../lib/media-utils';
-import { fetchWithAuth } from '../../../lib/api-client';
-import type { ChatConversation } from '../../../components/chat/ConversationRow';
-import * as Haptics from '../../../lib/haptics';
+import { supabase } from '../../lib/supabase';
+import { getCurrentProfile, canAssignAgents, UserProfile } from '../../lib/auth';
+import { resolveAvatarUrl, resolveListingImageUrl } from '../../lib/media-utils';
+import { fetchWithAuth } from '../../lib/api-client';
+import type { ChatConversation } from '../../components/chat/ConversationRow';
+import * as Haptics from '../../lib/haptics';
 
 export interface UseThreadSessionParams {
   conversationId: string;

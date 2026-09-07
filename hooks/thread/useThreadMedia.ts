@@ -2,11 +2,11 @@ import { useState, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { supabase } from '../../../lib/supabase';
-import { uploadLocalFileToSupabaseStorage } from '../../../lib/media-utils';
-import { dispatchPushNotification } from '../../../lib/push-notifications';
-import OfflineEngine from '../../../lib/offline-engine';
-import * as Haptics from '../../../lib/haptics';
+import { supabase } from '../../lib/supabase';
+import { uploadLocalFileToSupabaseStorage } from '../../lib/media-utils';
+import { dispatchPushNotification } from '../../lib/push-notifications';
+import OfflineEngine from '../../lib/offline-engine';
+import * as Haptics from '../../lib/haptics';
 
 export interface UseThreadMediaParams {
   conversationId: string;

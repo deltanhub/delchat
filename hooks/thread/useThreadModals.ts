@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { ChatMessage } from '../../../components/chat/MessageBubble';
+import type { ChatMessage } from '../../components/chat/MessageBubble';
 
 export type ThreadModalType =
   | 'none'

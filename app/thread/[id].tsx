@@ -41,10 +41,10 @@ import ConnectionBanner from '../../components/chat/ConnectionBanner';
 
 // Domain Hooks (Clean Architecture)
 import { useThreadPresence } from '../../hooks/useThreadPresence';
-import { useThreadModals } from './hooks/useThreadModals';
-import { useThreadSession } from './hooks/useThreadSession';
-import { useThreadMedia } from './hooks/useThreadMedia';
-import { useThreadMessages } from './hooks/useThreadMessages';
+import { useThreadModals } from '../../hooks/thread/useThreadModals';
+import { useThreadSession } from '../../hooks/thread/useThreadSession';
+import { useThreadMedia } from '../../hooks/thread/useThreadMedia';
+import { useThreadMessages } from '../../hooks/thread/useThreadMessages';
 
 /**
  * Lead Management Pipeline Stages

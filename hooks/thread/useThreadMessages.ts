@@ -1,21 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
-import { supabase } from '../../../lib/supabase';
-import { messageRepository } from '../../../lib/repositories/messageRepository';
-import type { ChatMessage, ChatAttachmentItem } from '../../../components/chat/bubbles/types';
-import type { SelectedListing } from '../../../components/chat/PropertyCatalogModal';
-import type { SelectedInquiryTemplate } from '../../../components/chat/InquiryFormModal';
-import { dispatchPushNotification } from '../../../lib/push-notifications';
-import OfflineEngine from '../../../lib/offline-engine';
-import SyncCoordinator from '../../../lib/sync-coordinator';
+import { supabase } from '../../lib/supabase';
+import { messageRepository } from '../../lib/repositories/messageRepository';
+import type { ChatMessage, ChatAttachmentItem } from '../../components/chat/bubbles/types';
+import type { SelectedListing } from '../../components/chat/PropertyCatalogModal';
+import type { SelectedInquiryTemplate } from '../../components/chat/InquiryFormModal';
+import { dispatchPushNotification } from '../../lib/push-notifications';
+import OfflineEngine from '../../lib/offline-engine';
+import SyncCoordinator from '../../lib/sync-coordinator';
 import {
   getCachedMessages,
   setCachedMessages,
   getPendingQueue,
   addPendingMessage,
   removePendingMessage,
-} from '../../../lib/cache-manager';
-import * as Haptics from '../../../lib/haptics';
+} from '../../lib/cache-manager';
+import * as Haptics from '../../lib/haptics';
 
 export interface UseThreadMessagesParams {
   conversationId: string;
