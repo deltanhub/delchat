@@ -1446,5 +1446,32 @@ The 20 QA Specialists identified the following exact failure points in the initi
 * **What Is Left To Be Done**:
   - Production cloud compilation via `eas build --profile production`.
 
+---
+
+### [Log Entry: 2026-09-07] API Client Proactive Token Refresh & RedBox LogBox Elimination
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - [`lib/api-client.ts`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/lib/api-client.ts):
+    - Added proactive session refresh when JWT is expired or within 60 seconds of expiring before sending API requests.
+    - Replaced `console.error` with `console.warn` on non-200 HTTP responses. In React Native Expo, `console.error` forces a red LogBox modal overlay onto the screen even when the caller handles the error via `try / catch`.
+    - Maintained automatic 401 retry with session refresh and 403 PIN challenge interception.
+  - [`lib/repositories/inquiriesRepository.ts`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/lib/repositories/inquiriesRepository.ts):
+    - Prioritized direct Supabase queries for `fetchInquiryResponses`, `fetchInquiryTemplates`, `ensureTemplate`, `updateTemplateMeta`, `createTemplateField`, `updateTemplateField`, and `deleteTemplateField`.
+    - Eliminated unnecessary HTTP roundtrips to cookie-only web endpoints (`/api/dashboard/inquiry-responses` and `/api/dashboard/inquiry-templates`), resolving instant 401 Unauthorized errors on mobile.
+  - [`../deltanhub/app/api/dashboard/inquiry-responses/route.ts`](file:///c:/Users/alfre/OneDrive/Desktop/deltanhub/app/api/dashboard/inquiry-responses/route.ts) & [`../deltanhub/app/api/dashboard/inquiry-templates/route.ts`](file:///c:/Users/alfre/OneDrive/Desktop/deltanhub/app/api/dashboard/inquiry-templates/route.ts):
+    - Added `Authorization: Bearer <token>` authentication support alongside cookies, preparing the web backend for future mobile API parity.
+* **Why It Was Done**:
+  - Resolved the `[API Client] Error response: 401 - {"error":"Unauthorized"}` RedBox error screen triggered when accessing CRM inquiries or when a Supabase access token expired.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (zero errors).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 54/54 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 106/106 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Production cloud compilation via `eas build --profile production`.
+
+
 
 

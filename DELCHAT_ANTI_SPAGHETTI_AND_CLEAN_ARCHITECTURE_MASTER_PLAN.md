@@ -372,6 +372,28 @@ node scripts/run_master_system_audit.js
 
 ---
 
+### API Client Proactive Token Refresh & RedBox LogBox Elimination (Completed 2026-09-07)
+
+- **What Was Done**:
+  - [`lib/api-client.ts`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/lib/api-client.ts):
+    - Added proactive session refresh when JWT is expired or within 60 seconds of expiring before sending API requests.
+    - Replaced `console.error` with `console.warn` on non-200 HTTP responses. In React Native Expo, `console.error` triggers LogBox modal popups even when errors are cleanly handled by caller `try / catch` blocks.
+    - Preserved automatic 401 retry with session refresh and 403 PIN challenge interception.
+  - [`lib/repositories/inquiriesRepository.ts`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/lib/repositories/inquiriesRepository.ts):
+    - Prioritized direct Supabase queries for `fetchInquiryResponses`, `fetchInquiryTemplates`, `ensureTemplate`, `updateTemplateMeta`, `createTemplateField`, `updateTemplateField`, and `deleteTemplateField`.
+    - Eliminated unnecessary HTTP roundtrips to cookie-only web endpoints (`/api/dashboard/inquiry-responses` and `/api/dashboard/inquiry-templates`), resolving instant 401 Unauthorized errors on mobile.
+  - [`../deltanhub/app/api/dashboard/inquiry-responses/route.ts`](file:///c:/Users/alfre/OneDrive/Desktop/deltanhub/app/api/dashboard/inquiry-responses/route.ts) & [`../deltanhub/app/api/dashboard/inquiry-templates/route.ts`](file:///c:/Users/alfre/OneDrive/Desktop/deltanhub/app/api/dashboard/inquiry-templates/route.ts):
+    - Added `Authorization: Bearer <token>` authentication support alongside cookies, preparing the web backend for future mobile API parity.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` --> Exited with code `0`.
+  - `node scripts/run_comprehensive_audit.js` --> **62 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/test_clean_architecture.js` --> **54 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/test_presence_sync.js` --> **ALL TESTS PASSED (100%)**.
+  - `node scripts/test_role_permissions.js` --> **10 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/run_master_system_audit.js` --> **106 PASSED / 0 FAILED (100% Pass Rate)**.
+
+---
+
 ## 7. What Is Left To Be Done
 
 All architectural, feature, and security fixes are **100% COMPLETED and VERIFIED**:
@@ -382,9 +404,11 @@ All architectural, feature, and security fixes are **100% COMPLETED and VERIFIED
 - Phase 5: Strict Domain Typing & Zero-Any Cleanliness [COMPLETED]
 - Phase 6: Chat Inquiries & Unified CRM Refactoring [COMPLETED]
 - Chat Security PIN Gate Keypad Grid & Dismissal Grace Mode [COMPLETED]
+- API Client Proactive Token Refresh & RedBox LogBox Elimination [COMPLETED]
 
 The remaining task is **Production Cloud Compilation**:
 1. Refresh [`README.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/README.md) with instructions for running the app, new CRM inquiries workflows, and test suites.
 2. Trigger live production EAS builds (`eas build -p android --profile production` / `eas build -p ios --profile production`) when deployment credentials are ready.
+
 
 
