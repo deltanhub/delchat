@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, TextInput, View, Text, Platform, Keyboard, Modal, Pressable, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
+import { useAudioRecorder, RecordingPresets, setAudioModeAsync, requestRecordingPermissionsAsync } from 'expo-audio';
 import * as Haptics from '../../lib/haptics';
 import Colors from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { useColorScheme } from '../useColorScheme';
-import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
+import Animated, { ZoomIn, ZoomOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import ScalePressable from '../ScalePressable';
 
 export type ChatAttachmentActionType =
@@ -54,14 +54,19 @@ export default function ChatComposer({
   const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
 
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderRef = useRef(recorder);
+  recorderRef.current = recorder;
+
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const recordingTimer = useRef<any>(null);
-  const recordingObjectRef = useRef<Audio.Recording | null>(null);
   const textInputRef = useRef<TextInput>(null);
 
+  // Keyboard show/hide listeners
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
@@ -78,46 +83,69 @@ export default function ChatComposer({
     return () => {
       showSub.remove();
       hideSub.remove();
-      if (recordingTimer.current) clearInterval(recordingTimer.current);
-      if (recordingObjectRef.current) {
-        recordingObjectRef.current.stopAndUnloadAsync().catch(() => {});
+    };
+  }, []);
+
+  // Safe audio recorder unmount cleanup
+  useEffect(() => {
+    return () => {
+      if (recordingTimer.current) {
+        clearInterval(recordingTimer.current);
+        recordingTimer.current = null;
+      }
+      // Only attempt to stop recorder if an active recording session was in-flight
+      if (isRecordingRef.current) {
+        isRecordingRef.current = false;
+        try {
+          const rec = recorderRef.current;
+          if (rec) {
+            Promise.resolve(rec.stop()).catch(() => {});
+          }
+        } catch {
+          // Native shared object may have already been released by ExpoModulesCore
+        }
       }
     };
   }, []);
 
   const handleStartRecording = async () => {
     try {
-      const permission = await Audio.requestPermissionsAsync();
+      const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Microphone Access Required', 'Please enable microphone access in settings to record voice notes.');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      recordingObjectRef.current = recording;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      isRecordingRef.current = true;
       setIsRecording(true);
       setRecordingSeconds(0);
+      if (recordingTimer.current) clearInterval(recordingTimer.current);
       recordingTimer.current = setInterval(() => {
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err: any) {
-      console.warn('Error starting recording:', err);
+      console.warn('[ChatComposer] Error starting recording:', err);
       Alert.alert('Recording Error', 'Unable to start audio recording on this device.');
+      isRecordingRef.current = false;
+      setIsRecording(false);
     }
   };
 
   const handleStopRecording = async (send: boolean) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const wasRecording = isRecordingRef.current;
+    isRecordingRef.current = false;
     setIsRecording(false);
+
     if (recordingTimer.current) {
       clearInterval(recordingTimer.current);
       recordingTimer.current = null;
@@ -126,18 +154,33 @@ export default function ChatComposer({
     let recordedUri: string | null = null;
     const finalDuration = Math.max(1, recordingSeconds);
 
-    if (recordingObjectRef.current) {
+    if (wasRecording) {
       try {
-        await recordingObjectRef.current.stopAndUnloadAsync();
-        recordedUri = recordingObjectRef.current.getURI();
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-        });
+        let isNativeRecording = false;
+        try {
+          // Safely evaluate getter in case native shared object is already released
+          isNativeRecording = Boolean(recorder && recorder.isRecording);
+        } catch {
+          isNativeRecording = false;
+        }
+
+        if (isNativeRecording) {
+          await recorder.stop().catch(() => {});
+        }
+
+        try {
+          recordedUri = recorder.uri || null;
+        } catch {
+          recordedUri = null;
+        }
+
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        }).catch(() => {});
       } catch (err) {
-        console.warn('Error stopping recording:', err);
+        console.warn('[ChatComposer] Error stopping recording:', err);
       }
-      recordingObjectRef.current = null;
     }
 
     if (send && onSendVoiceNote && finalDuration > 0) {
@@ -309,7 +352,9 @@ export default function ChatComposer({
         onRequestClose={() => setShowAttachmentMenu(false)}
       >
         <Pressable style={styles.menuBackdrop} onPress={() => setShowAttachmentMenu(false)}>
-          <View
+          <Animated.View
+            entering={SlideInDown.springify().damping(16).mass(0.9)}
+            exiting={SlideOutDown.duration(150)}
             style={[
               styles.floatingMenuCard,
               {
@@ -349,7 +394,7 @@ export default function ChatComposer({
                   </View>
                 </ScalePressable>
               ))}
-          </View>
+          </Animated.View>
         </Pressable>
       </Modal>
 

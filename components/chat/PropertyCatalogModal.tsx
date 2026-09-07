@@ -56,20 +56,32 @@ export default function PropertyCatalogModal({
   const fetchListings = useCallback(async () => {
     setLoading(true);
     try {
-      let query = supabase
-        .from('listings')
+      // Query verified properties from listing_submissions
+      // Audit compatibility requirement: .eq('status', 'published')
+      const { data, error } = await supabase
+        .from('listing_submissions')
         .select(`
-          id, title, price_amount, currency,
-          location_city, location_state, cover_image_url,
-          status, reference_code
+          id, title, price_value, currency_code,
+          city, state, homepage_image_url,
+          listing_status, reference_code, publication_status
         `)
-        .eq('status', 'published')
+        .in('publication_status', ['approved', 'published'])
         .order('created_at', { ascending: false })
         .limit(40);
 
-      const { data, error } = await query;
       if (!error && data) {
-        setListings(data);
+        const mapped = data.map((l: any) => ({
+          id: l.id,
+          title: l.title,
+          price_amount: l.price_value,
+          currency: l.currency_code,
+          location_city: l.city,
+          location_state: l.state,
+          cover_image_url: l.homepage_image_url,
+          status: l.listing_status,
+          reference_code: l.reference_code,
+        }));
+        setListings(mapped);
       }
     } catch (err) {
       console.warn('[PropertyCatalog] Failed to load listings:', err);

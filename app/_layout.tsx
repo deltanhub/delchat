@@ -1,21 +1,29 @@
 import React, { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { Stack, useRouter, useSegments, DarkTheme, DefaultTheme, ThemeProvider, type Href } from 'expo-router';
 import { useColorScheme } from '../components/useColorScheme';
 import { supabase } from '../lib/supabase';
-import * as Notifications from 'expo-notifications';
+import { Notifications, isAndroidExpoGo } from '../lib/notifications';
+import * as SplashScreen from 'expo-splash-screen';
 import 'react-native-reanimated';
 import { AppLockProvider } from '../components/AppLockProvider';
+import { ChatPinGateProvider } from '../components/chat/security/ChatPinGateProvider';
 import IncomingCallHUD from '../components/chat/IncomingCallHUD';
 
-// Define how notifications are handled when the app is in the foreground
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  } as any),
-});
+// Prevent splash screen from auto-hiding before authentication/resources are initialized
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Define how notifications are handled when the app is in the foreground (only outside Android Expo Go)
+if (!isAndroidExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export {
   ErrorBoundary,
@@ -57,31 +65,41 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
-    // 1. Listen for foreground notifications
-    const foregroundSubscription = Notifications.addNotificationReceivedListener((notification) => {
-      console.log('[Push] Foreground notification received:', notification);
-    });
+    // 1. Listen for foreground notifications (active in standalone/dev builds)
+    const foregroundSubscription = !isAndroidExpoGo
+      ? Notifications.addNotificationReceivedListener((notification) => {
+          console.log('[Push] Foreground notification received:', notification);
+        })
+      : null;
 
     // 2. Listen for notification click responses (Deep Linking)
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log('[Push] Notification tapped, interaction response received');
-      const data = response.notification.request.content.data;
-      const { conversationId, type } = data || {};
+    const responseSubscription = !isAndroidExpoGo
+      ? Notifications.addNotificationResponseReceivedListener((response) => {
+          console.log('[Push] Notification tapped, interaction response received');
+          const data = response.notification.request.content.data;
+          const { conversationId, type } = data || {};
 
-      if (conversationId) {
-        if (type === 'call') {
-          console.log(`[Push] Deep linking to call screen for conversation: ${conversationId}`);
-          router.push(`/call/${conversationId}?role=receiver` as any);
-        } else {
-          console.log(`[Push] Deep linking to chat thread for conversation: ${conversationId}`);
-          router.push(`/thread/${conversationId}` as any);
-        }
-      }
-    });
+          if (conversationId) {
+            if (type === 'call') {
+              console.log(`[Push] Deep linking to call screen for conversation: ${conversationId}`);
+              router.push(`/call/${conversationId}?role=receiver` as Href);
+            } else {
+              console.log(`[Push] Deep linking to chat thread for conversation: ${conversationId}`);
+              router.push(`/thread/${conversationId}` as Href);
+            }
+          }
+        })
+      : null;
+
+    // 3. Fallback timer to ensure splash screen is hidden under all network conditions
+    const splashTimer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 2000);
 
     return () => {
-      foregroundSubscription.remove();
-      responseSubscription.remove();
+      foregroundSubscription?.remove();
+      responseSubscription?.remove();
+      clearTimeout(splashTimer);
     };
   }, []);
 
@@ -89,15 +107,17 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AuthStateListener />
       <AppLockProvider>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="auth" />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="call/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="compose" options={{ presentation: 'modal', headerShown: false }} />
-        </Stack>
-        <IncomingCallHUD />
+        <ChatPinGateProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="auth" />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="call/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="compose" options={{ presentation: 'modal', headerShown: false }} />
+          </Stack>
+          <IncomingCallHUD />
+        </ChatPinGateProvider>
       </AppLockProvider>
     </ThemeProvider>
   );

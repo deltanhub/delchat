@@ -1,10 +1,17 @@
-import * as Notifications from 'expo-notifications';
+import { Notifications, isAndroidExpoGo } from './notifications';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { supabase } from './supabase';
 import { fetchWithAuth } from './api-client';
 
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
+  if (isAndroidExpoGo) {
+    console.warn(
+      '[Push] Remote push notifications are disabled in Android Expo Go (SDK 53+). Please use an EAS development build or standalone production APK.'
+    );
+    return null;
+  }
+
   let token = null;
 
   if (Platform.OS === 'android') {
@@ -31,12 +38,25 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
   try {
     // Get Expo Push Token with project ID if available
-    const projectId =
+    const configuredProjectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
-      (Constants as any)?.easConfig?.projectId;
+      (Constants as { easConfig?: { projectId?: string } })?.easConfig?.projectId;
+
+    // Validate that projectId is a valid UUID before sending to Expo Notifications API
+    const isValidUuid =
+      typeof configuredProjectId === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        configuredProjectId.trim()
+      );
+
+    if (configuredProjectId && !isValidUuid) {
+      console.warn(
+        `[Push] Configured projectId "${configuredProjectId}" is not a valid UUID; omitting explicit projectId parameter.`
+      );
+    }
 
     const tokenData = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined
+      isValidUuid ? { projectId: configuredProjectId.trim() } : undefined
     );
     token = tokenData.data;
     console.log('[Push] Registered Expo Push Token:', token);
@@ -46,7 +66,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       await sendPushTokenToBackend(token);
     }
   } catch (error) {
-    console.error('[Push] Error getting push token:', error);
+    console.warn('[Push] Push token registration skipped or failed:', error);
   }
 
   return token;

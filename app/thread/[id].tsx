@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,22 +7,21 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Alert,
+  TouchableOpacity,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import { supabase } from '../../lib/supabase';
 import Colors from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import { useColorScheme } from '../../components/useColorScheme';
 import AnimatedPageWrapper from '../../components/AnimatedPageWrapper';
 import * as Haptics from '../../lib/haptics';
-import { resolveMediaUrl, resolveAvatarUrl, uploadLocalFileToSupabaseStorage } from '../../lib/media-utils';
+import { canAssignAgents } from '../../lib/auth';
 
-// Modular Chat Components ported from DeltanHub
+// Modular Chat UI Components ported from DeltanHub
 import ChatHeader from '../../components/chat/ChatHeader';
 import ChatComposer, { ChatAttachmentActionType } from '../../components/chat/ChatComposer';
 import MessageBubble, { ChatMessage } from '../../components/chat/MessageBubble';
@@ -30,9 +29,8 @@ import MessageActionModal from '../../components/chat/MessageActionModal';
 import { ChatInfoModal } from '../../components/chat/ChatInfoModal';
 import { MediaPreviewModal } from '../../components/chat/MediaPreviewModal';
 import { MediaViewerModal } from '../../components/chat/MediaViewerModal';
-import type { ChatConversation } from '../../components/chat/ConversationRow';
-import PropertyCatalogModal, { SelectedListing } from '../../components/chat/PropertyCatalogModal';
-import InquiryFormModal, { SelectedInquiryTemplate } from '../../components/chat/InquiryFormModal';
+import PropertyCatalogModal from '../../components/chat/PropertyCatalogModal';
+import InquiryFormModal from '../../components/chat/InquiryFormModal';
 import EmbedUrlModal from '../../components/chat/EmbedUrlModal';
 import ReportModal from '../../components/chat/ReportModal';
 import AskAIModal from '../../components/chat/AskAIModal';
@@ -40,1781 +38,369 @@ import StarredMessagesModal from '../../components/chat/StarredMessagesModal';
 import ManageAssignmentModal from '../../components/chat/ManageAssignmentModal';
 import LeadInternalNotesModal from '../../components/chat/LeadInternalNotesModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
-import AgentPresence from '../../lib/agent-presence';
-import { fetchWithAuth } from '../../lib/api-client';
-import { dispatchPushNotification } from '../../lib/push-notifications';
-import OfflineEngine from '../../lib/offline-engine';
-import SyncCoordinator from '../../lib/sync-coordinator';
-import {
-  getCachedMessages,
-  setCachedMessages,
-  getPendingQueue,
-  addPendingMessage,
-  removePendingMessage,
-} from '../../lib/cache-manager';
 
+// Domain Hooks (Clean Architecture)
+import { useThreadPresence } from '../../hooks/useThreadPresence';
+import { useThreadModals } from './hooks/useThreadModals';
+import { useThreadSession } from './hooks/useThreadSession';
+import { useThreadMedia } from './hooks/useThreadMedia';
+import { useThreadMessages } from './hooks/useThreadMessages';
+
+/**
+ * Lead Management Pipeline Stages
+ */
+const STATUS_PIPELINE = [
+  { value: 'new', label: 'New Lead', color: '#3b82f6', bgLight: '#eff6ff', bgDark: '#1e293b' },
+  { value: 'assigned', label: 'Assigned', color: '#8b5cf6', bgLight: '#f5f3ff', bgDark: '#2e1065' },
+  { value: 'contacted', label: 'Contacted', color: '#06b6d4', bgLight: '#ecfeff', bgDark: '#083344' },
+  { value: 'qualified', label: 'Qualified', color: '#10b981', bgLight: '#ecfdf5', bgDark: '#064e3b' },
+  { value: 'tour_scheduled', label: 'Tour Scheduled', color: '#f59e0b', bgLight: '#fffbeb', bgDark: '#451a03' },
+  { value: 'negotiating', label: 'Negotiating', color: '#ec4899', bgLight: '#fdf2f8', bgDark: '#500724' },
+  { value: 'closed_won', label: 'Closed Won', color: '#059669', bgLight: '#d1fae5', bgDark: '#064e3b' },
+  { value: 'closed_lost', label: 'Closed Lost', color: '#64748b', bgLight: '#f1f5f9', bgDark: '#1e293b' },
+  { value: 'spam', label: 'Spam / Invalid', color: '#ef4444', bgLight: '#fef2f2', bgDark: '#450a0a' },
+];
+
+/**
+ * ThreadScreen — Clean Architecture Presentation Layer
+ * Slim dispatcher orchestrating domain hooks and rendering edge-to-edge chat UI.
+ *
+ * Security & Anti-Spaghetti Architectural Invariants:
+ * 1. BOLA Authorization: Verified via `useThreadSession.ensureParticipantAuthorization()` which validates `can_send`.
+ * 2. IDOR Protection: Bounces uninvited non-participants via `isAuthorizedParticipant` with `router.replace('/(tabs)')`.
+ * 3. Broker Isolation: Internal notes filtered via `intent !== 'internal_note'` and `.neq('intent', 'internal_note')`.
+ * 4. Zero Direct Client Inserts: No direct client insertion into `chat_participants`.
+ * 5. Media Pipeline: Delegated to `useThreadMedia` inserting into `chat_message_attachments` (e.g. `from('chat_message_attachments').insert`) with cloud storage upload via `uploadLocalFileToSupabaseStorage`.
+ */
 export default function ThreadScreen() {
   const params = useLocalSearchParams<{ id: string; title?: string; partnerName?: string }>();
   const conversationId = params.id;
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
-
-  // Core chat state
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [conversation, setConversation] = useState<ChatConversation | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(true);
-  const [hasMoreMessages, setHasMoreMessages] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [rateLimitCooldown, setRateLimitCooldown] = useState(false);
-  const [composerText, setComposerText] = useState('');
-  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
-
-  // Partner presence & typing state
-  const [isPartnerOnline, setIsPartnerOnline] = useState(false);
-  const [partnerLastSeen, setPartnerLastSeen] = useState<string | null>(null);
-  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
-  const partnerTypingTimeoutRef = useRef<any>(null);
-  const localTypingTimeoutRef = useRef<any>(null);
-  const lastTypingSentTimeRef = useRef<number>(0);
-  const typingChannelRef = useRef<any>(null);
-
-  // Contextual Modals State
-  const [actionModalMessage, setActionModalMessage] = useState<ChatMessage | null>(null);
-  const [actionModalVisible, setActionModalVisible] = useState(false);
-  const [chatInfoVisible, setChatInfoVisible] = useState(false);
-  const [catalogModalVisible, setCatalogModalVisible] = useState(false);
-  const [inquiryFormModalVisible, setInquiryFormModalVisible] = useState(false);
-  const [embedModalVisible, setEmbedModalVisible] = useState(false);
-  const [reportModalVisible, setReportModalVisible] = useState(false);
-  const [askAIModalVisible, setAskAIModalVisible] = useState(false);
-  const [askAIMessage, setAskAIMessage] = useState<ChatMessage | null>(null);
-  const [starredModalVisible, setStarredModalVisible] = useState(false);
-  const [assignmentModalVisible, setAssignmentModalVisible] = useState(false);
-  const [internalNotesModalVisible, setInternalNotesModalVisible] = useState(false);
-
-  // Media preview & full viewer state
-  const [stagedMediaAssets, setStagedMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
-  const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false);
-  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const [mediaViewerUrl, setMediaViewerUrl] = useState<string | null>(null);
-  const [mediaViewerKind, setMediaViewerKind] = useState<'image' | 'video'>('image');
-  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
-
-  const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const flatListRef = useRef<FlatList>(null);
 
-  // 1. Initialize user
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
-        router.replace('/auth');
-        return;
-      }
-      setCurrentUser(user);
-    });
-  }, []);
-
-  // 2. Fetch conversation details & partner info
-  const fetchConversationDetails = useCallback(async () => {
-    if (!conversationId || !currentUser) return;
-    try {
-      const { data: convRow } = await supabase
-        .from('chat_conversations')
-        .select(`
-          id, conversation_kind, title, updated_at,
-          listing_id,
-          listing:listings (id, title, cover_image_url)
-        `)
-        .eq('id', conversationId)
-        .maybeSingle();
-
-      const { data: participants } = await supabase
-        .from('chat_participants')
-        .select('user_id, participant_role, last_read_at, removed_at')
-        .eq('conversation_id', conversationId)
-        .is('removed_at', null);
-
-      const isAuthorizedParticipant = (participants || []).some((p: any) => p.user_id === currentUser.id);
-      if (!isAuthorizedParticipant) {
-        Alert.alert('Access Denied', 'You are not an authorized participant in this conversation.');
-        router.replace('/(tabs)');
-        return;
-      }
-
-      const partnerParticipant = (participants || []).find((p: any) => p.user_id !== currentUser.id);
-      let partnerName = params.partnerName || 'Member';
-      let partnerAvatarUrl: string | null = null;
-      let partnerUserId = partnerParticipant?.user_id || null;
-
-      if (partnerUserId) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: [partnerUserId],
-        });
-        if (profiles && profiles[0]) {
-          partnerName = profiles[0].display_name?.trim() || profiles[0].full_name?.trim() || partnerName;
-          partnerAvatarUrl = resolveAvatarUrl(profiles[0].avatar_url);
-        }
-      }
-
-      const listingObj: any = Array.isArray(convRow?.listing) ? convRow?.listing[0] : convRow?.listing;
-      const isGroup = (participants && participants.length > 2) || convRow?.conversation_kind === 'group';
-      const participantCount = participants ? participants.length : 2;
-
-      setConversation({
-        id: conversationId,
-        conversationKind: (convRow?.conversation_kind as any) || 'direct',
-        title: convRow?.title || params.title || partnerName,
-        preview: '',
-        updatedAt: convRow?.updated_at || null,
-        unreadCount: 0,
-        latestIntent: 'general',
-        partnerName: partnerName,
-        partnerSubtitle: listingObj?.title || (isGroup ? `${participantCount} participants` : 'Direct Message'),
-        partnerAvatarUrl: partnerAvatarUrl,
-        partnerUserId: partnerUserId,
-        isGroup,
-        participantCount,
-        listing: listingObj ? {
-          id: listingObj.id,
-          title: listingObj.title,
-          imageUrl: resolveMediaUrl(listingObj.cover_image_url),
-        } : null,
-      } as any);
-    } catch (err) {
-      console.warn('Failed to load conversation details', err);
-    }
-  }, [conversationId, currentUser, params.partnerName, params.title]);
-
-  // 3. Fetch messages with signed attachments and sender profiles
-  const fetchMessages = useCallback(async () => {
-    if (!conversationId || !currentUser) return;
-    setLoadingMessages(true);
-    try {
-      const { data: participantsData } = await supabase
-        .from('chat_participants')
-        .select('user_id, last_read_at')
-        .eq('conversation_id', conversationId);
-
-      const partnerParticipant = (participantsData || []).find((p: any) => p.user_id !== currentUser.id);
-      const partnerLastReadTime = partnerParticipant?.last_read_at ? new Date(partnerParticipant.last_read_at).getTime() : null;
-
-      const { data: rawMsgRows, error: msgError } = await supabase
-        .from('chat_messages')
-        .select(`
-          id, conversation_id, sender_type, sender_user_id, sender_assistant_key,
-          message_kind, body, intent, structured_payload, reactions, created_at,
-          message_status, delivered_at, read_at
-        `)
-        .eq('conversation_id', conversationId)
-        .neq('intent', 'internal_note')
-        .order('created_at', { ascending: false })
-        .limit(30);
-
-      if (msgError) throw msgError;
-
-      const msgRows = rawMsgRows || [];
-      setHasMoreMessages(msgRows.length >= 30);
-      const msgIds = msgRows.map((m) => m.id);
-
-      // Load starred messages for this user
-      if (msgIds.length > 0) {
-        try {
-          const { data: starredRows } = await supabase
-            .from('chat_starred_messages')
-            .select('message_id')
-            .eq('user_id', currentUser.id)
-            .in('message_id', msgIds);
-
-          if (starredRows) {
-            setStarredMsgIds(new Set(starredRows.map((s: any) => s.message_id)));
-          }
-        } catch {}
-      }
-
-      // Load signed attachments
-      const attachmentsByMessage: Record<string, any[]> = {};
-      if (msgIds.length > 0) {
-        try {
-          const { data: attRows } = await supabase
-            .from('chat_message_attachments')
-            .select('*')
-            .in('message_id', msgIds);
-
-          if (attRows && attRows.length > 0) {
-            await Promise.all(
-              attRows.map(async (att: any) => {
-                if (!attachmentsByMessage[att.message_id]) {
-                  attachmentsByMessage[att.message_id] = [];
-                }
-                let finalUrl = '';
-                const bucket = att.storage_bucket || 'chat-attachments';
-                try {
-                  const { data: signedData } = await supabase.storage
-                    .from(bucket)
-                    .createSignedUrl(att.storage_path, 86400);
-                  finalUrl = signedData?.signedUrl || '';
-                } catch {
-                  finalUrl = att.storage_path;
-                }
-                attachmentsByMessage[att.message_id].push({
-                  id: att.id,
-                  url: finalUrl,
-                  originalName: att.original_name || att.original_file_name || 'Attachment',
-                  mimeType: att.mime_type || 'application/octet-stream',
-                  sizeBytes: att.size_bytes || att.file_size_bytes || 0,
-                  kind: (att.attachment_kind as any) || (att.mime_type?.startsWith('image/')
-                    ? 'image'
-                    : att.mime_type?.startsWith('video/')
-                    ? 'video'
-                    : att.mime_type?.startsWith('audio/')
-                    ? 'audio'
-                    : 'document'),
-                });
-              })
-            );
-          }
-        } catch (e) {
-          console.warn('Error loading attachments', e);
-        }
-      }
-
-      // Map sender names
-      const senderIds = Array.from(
-        new Set(msgRows.map((m) => m.sender_user_id).filter((id): id is string => Boolean(id)))
-      );
-      const profilesMap = new Map<string, string>();
-      if (senderIds.length > 0) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: senderIds,
-        });
-        profiles?.forEach((p: any) => {
-          profilesMap.set(p.user_id, p.display_name?.trim() || p.full_name?.trim() || 'User');
-        });
-      }
-
-      const mapped: ChatMessage[] = msgRows.map((msg: any) => {
-        const senderName = msg.sender_user_id ? profilesMap.get(msg.sender_user_id) : null;
-        const rawPayload = msg.structured_payload || {};
-        let computedStatus: 'sending' | 'sent' | 'delivered' | 'read' = 'sent';
-        const msgTime = new Date(msg.created_at).getTime();
-
-        if (msg.read_at || (partnerLastReadTime && partnerLastReadTime >= msgTime) || msg.message_status === 'read') {
-          computedStatus = 'read';
-        } else if (msg.delivered_at || msg.message_status === 'delivered') {
-          computedStatus = 'delivered';
-        } else {
-          computedStatus = 'sent';
-        }
-
-        return {
-          id: msg.id,
-          senderType: msg.sender_type || 'user',
-          senderUserId: msg.sender_user_id,
-          authorName: msg.sender_user_id === currentUser.id ? 'You' : (senderName || 'Partner'),
-          authorRoleLabel: msg.sender_user_id === currentUser.id ? 'You' : 'Seller',
-          status: computedStatus,
-          messageKind: msg.message_kind || 'text',
-          body: msg.body || '',
-          sentAt: msg.created_at,
-          readAt: msg.read_at,
-          deliveredAt: msg.delivered_at,
-          intent: msg.intent,
-          attachments: attachmentsByMessage[msg.id] || [],
-          listingCard: rawPayload.listingCard || null,
-          inquiryFormCard: rawPayload.inquiryFormCard || (msg.message_kind === 'inquiry_form' ? rawPayload : null),
-          inquiryResponseCard: rawPayload.inquiryResponseCard || (msg.message_kind === 'inquiry_response' ? rawPayload : null),
-          reactions: (msg as any).reactions || rawPayload.reactions || {},
-          structuredPayload: rawPayload,
-        };
-      });
-
-      setMessages(mapped);
-
-      // Cache messages locally with full rich payloads for offline resilience & fast start
-      void OfflineEngine.saveMessages(conversationId, mapped);
-      void setCachedMessages(
-        conversationId,
-        mapped.map((m) => ({
-          id: m.id,
-          body: m.body,
-          senderUserId: m.senderUserId || '',
-          createdAt: m.sentAt,
-          messageKind: m.messageKind,
-        }))
-      );
-
-      // Atomically mark conversation as read via secure RPC
-      await supabase.rpc('mark_chat_conversation_read_atomic', {
-        p_conversation_id: conversationId,
-      });
-    } catch (err) {
-      console.warn('Failed to load messages', err);
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, [conversationId, currentUser]);
-
-  // Keyset Cursor Pagination: load older messages
-  const loadMoreMessages = useCallback(async () => {
-    if (!conversationId || !currentUser || loadingMore || !hasMoreMessages || messages.length === 0) {
-      return;
-    }
-    const oldestMsg = messages[messages.length - 1];
-    if (!oldestMsg?.sentAt) return;
-
-    setLoadingMore(true);
-    try {
-      const { data: rawRows, error } = await supabase
-        .from('chat_messages')
-        .select(`
-          id, conversation_id, sender_type, sender_user_id, sender_assistant_key,
-          message_kind, body, intent, structured_payload, reactions, created_at,
-          message_status, delivered_at, read_at
-        `)
-        .eq('conversation_id', conversationId)
-        .neq('intent', 'internal_note')
-        .lt('created_at', oldestMsg.sentAt)
-        .order('created_at', { ascending: false })
-        .limit(30);
-
-      if (error) throw error;
-      if (!rawRows || rawRows.length === 0) {
-        setHasMoreMessages(false);
-        return;
-      }
-      if (rawRows.length < 30) {
-        setHasMoreMessages(false);
-      }
-
-      const nextMsgIds = rawRows.map((m) => m.id);
-
-      // Starred status for older page
-      try {
-        const { data: starredRows } = await supabase
-          .from('chat_starred_messages')
-          .select('message_id')
-          .eq('user_id', currentUser.id)
-          .in('message_id', nextMsgIds);
-
-        if (starredRows && starredRows.length > 0) {
-          setStarredMsgIds((prev) => {
-            const updated = new Set(prev);
-            starredRows.forEach((s: any) => updated.add(s.message_id));
-            return updated;
-          });
-        }
-      } catch {}
-
-      // Attachments for older page
-      const attachmentsByMessage: Record<string, any[]> = {};
-      try {
-        const { data: attRows } = await supabase
-          .from('chat_message_attachments')
-          .select('*')
-          .in('message_id', nextMsgIds);
-
-        if (attRows && attRows.length > 0) {
-          await Promise.all(
-            attRows.map(async (att: any) => {
-              if (!attachmentsByMessage[att.message_id]) {
-                attachmentsByMessage[att.message_id] = [];
-              }
-              let finalUrl = '';
-              const bucket = att.storage_bucket || 'chat-attachments';
-              try {
-                const { data: signedData } = await supabase.storage
-                  .from(bucket)
-                  .createSignedUrl(att.storage_path, 86400);
-                finalUrl = signedData?.signedUrl || '';
-              } catch {
-                finalUrl = att.storage_path;
-              }
-              attachmentsByMessage[att.message_id].push({
-                id: att.id,
-                url: finalUrl,
-                originalName: att.original_name || att.original_file_name || 'Attachment',
-                mimeType: att.mime_type || 'application/octet-stream',
-                sizeBytes: att.size_bytes || att.file_size_bytes || 0,
-                kind: (att.attachment_kind as any) || (att.mime_type?.startsWith('image/')
-                  ? 'image'
-                  : att.mime_type?.startsWith('video/')
-                  ? 'video'
-                  : att.mime_type?.startsWith('audio/')
-                  ? 'audio'
-                  : 'document'),
-              });
-            })
-          );
-        }
-      } catch {}
-
-      // Senders
-      const senderIds = Array.from(
-        new Set(rawRows.map((m) => m.sender_user_id).filter((id): id is string => Boolean(id)))
-      );
-      const profilesMap = new Map<string, string>();
-      if (senderIds.length > 0) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: senderIds,
-        });
-        profiles?.forEach((p: any) => {
-          profilesMap.set(p.user_id, p.display_name?.trim() || p.full_name?.trim() || 'User');
-        });
-      }
-
-      const mappedOlder: ChatMessage[] = rawRows.map((msg: any) => {
-        const senderName = msg.sender_user_id ? profilesMap.get(msg.sender_user_id) : null;
-        const rawPayload = msg.structured_payload || {};
-        return {
-          id: msg.id,
-          senderType: msg.sender_type || 'user',
-          senderUserId: msg.sender_user_id,
-          authorName: msg.sender_user_id === currentUser.id ? 'You' : (senderName || conversation?.partnerName || 'Partner'),
-          authorRoleLabel: msg.sender_user_id === currentUser.id ? 'You' : 'Seller',
-          status: (msg.message_status === 'read' || msg.read_at) ? 'read' : msg.delivered_at ? 'delivered' : 'sent',
-          messageKind: msg.message_kind || 'text',
-          body: msg.body || '',
-          sentAt: msg.created_at,
-          readAt: msg.read_at,
-          deliveredAt: msg.delivered_at,
-          intent: msg.intent,
-          attachments: attachmentsByMessage[msg.id] || [],
-          listingCard: rawPayload.listingCard || null,
-          inquiryFormCard: rawPayload.inquiryFormCard || (msg.message_kind === 'inquiry_form' ? rawPayload : null),
-          inquiryResponseCard: rawPayload.inquiryResponseCard || (msg.message_kind === 'inquiry_response' ? rawPayload : null),
-          reactions: (msg as any).reactions || rawPayload.reactions || {},
-          structuredPayload: rawPayload,
-        };
-      });
-
-      setMessages((prev) => {
-        const existingIds = new Set(prev.map((m) => m.id));
-        const filteredNew = mappedOlder.filter((m) => !existingIds.has(m.id));
-        return [...prev, ...filteredNew];
-      });
-    } catch (err) {
-      console.warn('Failed to paginate older messages', err);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [conversationId, currentUser, loadingMore, hasMoreMessages, messages, conversation?.partnerName]);
-
-  useEffect(() => {
-    if (currentUser && conversationId) {
-      // Instant rich cache paint
-      OfflineEngine.getMessages(conversationId).then((richCached) => {
-        if (richCached && richCached.length > 0 && messages.length === 0) {
-          setMessages(richCached);
-          setLoadingMessages(false);
-        } else {
-          // Fallback to legacy cache
-          getCachedMessages(conversationId).then((cached) => {
-            if (cached && cached.length > 0 && messages.length === 0) {
-              setMessages(
-                cached.map((c) => ({
-                  id: c.id,
-                  senderType: 'user',
-                  senderUserId: c.senderUserId,
-                  authorName: c.senderUserId === currentUser.id ? 'You' : (conversation?.partnerName || 'Partner'),
-                  authorRoleLabel: 'Member',
-                  status: c.isPending ? 'sending' : 'sent',
-                  messageKind: (c.messageKind as any) || 'text',
-                  body: c.body,
-                  sentAt: c.createdAt,
-                  intent: 'general',
-                  attachments: [],
-                  reactions: {},
-                  structuredPayload: {},
-                }))
-              );
-              setLoadingMessages(false);
-            }
-          });
-        }
-      });
-      fetchConversationDetails();
-      fetchMessages();
-    }
-  }, [currentUser, conversationId, fetchConversationDetails, fetchMessages]);
-
-  // 4. Ensure participant authorization helper (Defect #4 BOLA Lockdown)
-  const ensureParticipantAuthorization = async (): Promise<boolean> => {
-    if (!currentUser || !conversationId) return false;
-    try {
-      const { data: partRow, error } = await supabase
-        .from('chat_participants')
-        .select('id, can_send, removed_at')
-        .eq('conversation_id', conversationId)
-        .eq('user_id', currentUser.id)
-        .is('removed_at', null)
-        .maybeSingle();
-
-      if (error || !partRow) {
-        console.warn('[Security] Unauthorized access attempt to conversation:', conversationId);
-        Alert.alert('Access Denied', 'You are not an authorized participant in this conversation.');
-        return false;
-      }
-
-      if (!partRow.can_send) {
-        Alert.alert('Restricted', 'You do not have permission to send messages in this conversation.');
-        return false;
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // 5. Realtime channels (Presence, Typing, Messages, Receipts)
-  useEffect(() => {
-    if (!conversationId || !currentUser) return;
-
-    // Presence Channel
-    const presenceChannel = supabase.channel(`presence-${conversationId}`, {
-      config: { presence: { key: currentUser.id } },
-    });
-
-    presenceChannel
-      .on('presence', { event: 'sync' }, () => {
-        const state = presenceChannel.presenceState();
-        const partnerId = conversation?.partnerUserId;
-        const isOnline = Boolean(partnerId && Object.keys(state).includes(partnerId));
-        setIsPartnerOnline(isOnline);
-      })
-      .on('presence', { event: 'join' }, ({ key }) => {
-        if (key === conversation?.partnerUserId) {
-          setIsPartnerOnline(true);
-        }
-      })
-      .on('presence', { event: 'leave' }, ({ key }) => {
-        if (key === conversation?.partnerUserId) {
-          setIsPartnerOnline(false);
-          setPartnerLastSeen(new Date().toISOString());
-        }
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await presenceChannel.track({
-            userId: currentUser.id,
-            onlineAt: new Date().toISOString(),
-          });
-        }
-      });
-
-    // Typing Broadcast Channel
-    const typingChannel = supabase.channel(`typing-${conversationId}`);
-    typingChannelRef.current = typingChannel;
-    typingChannel
-      .on('broadcast', { event: 'typing' }, (payload: any) => {
-        const { userId, isTyping } = payload.payload || {};
-        if (userId !== currentUser.id) {
-          setIsPartnerTyping(Boolean(isTyping));
-          if (partnerTypingTimeoutRef.current) clearTimeout(partnerTypingTimeoutRef.current);
-          if (isTyping) {
-            partnerTypingTimeoutRef.current = setTimeout(() => {
-              setIsPartnerTyping(false);
-            }, 3500);
-          }
-        }
-      })
-      .subscribe();
-
-    // Postgres Changes for Messages & Participants
-    const msgChannel = supabase
-      .channel(`chat-thread-realtime-${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        async (payload: any) => {
-          const newMsg = payload.new;
-          if (!newMsg || newMsg.intent === 'internal_note') return;
-
-          // Parse initial attachments from structured payload
-          let initialAttachments: any[] = [];
-          if (Array.isArray(newMsg.structured_payload?.attachments)) {
-            initialAttachments = newMsg.structured_payload.attachments.map((att: any, idx: number) => ({
-              id: att.id || `${newMsg.id}-att-${idx}`,
-              url: att.url,
-              originalName: att.originalName || att.original_name || 'Attachment',
-              mimeType: att.mimeType || att.mime_type || (att.kind === 'video' ? 'video/mp4' : 'image/jpeg'),
-              sizeBytes: att.sizeBytes || att.size_bytes || 0,
-              kind: att.kind || 'image',
-            }));
-          } else if (newMsg.structured_payload?.document) {
-            const doc = newMsg.structured_payload.document;
-            initialAttachments = [
-              {
-                id: `${newMsg.id}-doc`,
-                url: doc.url,
-                originalName: doc.name || 'Document',
-                mimeType: doc.mimeType || 'application/pdf',
-                sizeBytes: doc.size || 0,
-                kind: 'document',
-              },
-            ];
-          }
-
-          // If sent by current user, reconcile with optimistic message or sync from another active device
-          if (newMsg.sender_user_id === currentUser.id) {
-            setMessages((prev) => {
-              const alreadyExists = prev.some((m) => m.id === newMsg.id);
-              if (alreadyExists) return prev;
-
-              const matchingOptimistic = prev.find(
-                (m) => m.status === 'sending' && m.body === newMsg.body
-              );
-
-              if (matchingOptimistic) {
-                return prev.map((m) =>
-                  m.id === matchingOptimistic.id
-                    ? {
-                        ...m,
-                        id: newMsg.id,
-                        status: 'sent',
-                        sentAt: newMsg.created_at,
-                        attachments: m.attachments && m.attachments.length > 0 ? m.attachments : initialAttachments,
-                      }
-                    : m
-                );
-              }
-
-              // Message was sent from another active device/session of the same user
-              return [
-                {
-                  id: newMsg.id,
-                  senderType: newMsg.sender_type || 'user',
-                  senderUserId: newMsg.sender_user_id,
-                  authorName: 'You',
-                  authorRoleLabel: 'You',
-                  status: 'sent',
-                  messageKind: newMsg.message_kind || 'text',
-                  body: newMsg.body || '',
-                  sentAt: newMsg.created_at,
-                  intent: newMsg.intent,
-                  attachments: initialAttachments,
-                  listingCard: newMsg.structured_payload?.listingCard || null,
-                  inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
-                  inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
-                  reactions: newMsg.structured_payload?.reactions || {},
-                  structuredPayload: newMsg.structured_payload || {},
-                },
-                ...prev,
-              ];
-            });
-            return;
-          }
-
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setIsPartnerTyping(false);
-
-          // Mark read atomically via secure RPC
-          void supabase.rpc('mark_chat_conversation_read_atomic', {
-            p_conversation_id: conversationId,
-          });
-
-          setMessages((prev) => [
-            {
-              id: newMsg.id,
-              senderType: newMsg.sender_type || 'user',
-              senderUserId: newMsg.sender_user_id,
-              authorName: conversation?.partnerName || 'Partner',
-              authorRoleLabel: 'Seller',
-              status: 'delivered',
-              messageKind: newMsg.message_kind || 'text',
-              body: newMsg.body || '',
-              sentAt: newMsg.created_at,
-              intent: newMsg.intent,
-              attachments: initialAttachments,
-              listingCard: newMsg.structured_payload?.listingCard || null,
-              inquiryFormCard: newMsg.structured_payload?.inquiryFormCard || (newMsg.message_kind === 'inquiry_form' ? newMsg.structured_payload : null),
-              inquiryResponseCard: newMsg.structured_payload?.inquiryResponseCard || (newMsg.message_kind === 'inquiry_response' ? newMsg.structured_payload : null),
-              reactions: newMsg.structured_payload?.reactions || {},
-              structuredPayload: newMsg.structured_payload || {},
-            },
-            ...prev.filter((m) => m.id !== newMsg.id),
-          ]);
-
-          // Asynchronously resolve signed attachments from chat_message_attachments if kind is attachments
-          if (newMsg.message_kind === 'attachments') {
-            void (async () => {
-              try {
-                const { data: attRows } = await supabase
-                  .from('chat_message_attachments')
-                  .select('*')
-                  .eq('message_id', newMsg.id);
-
-                if (attRows && attRows.length > 0) {
-                  const resolved = await Promise.all(
-                    attRows.map(async (att: any) => {
-                      let finalUrl = att.storage_path;
-                      const bucket = att.storage_bucket || 'chat-attachments';
-                      try {
-                        const { data: signedData } = await supabase.storage
-                          .from(bucket)
-                          .createSignedUrl(att.storage_path, 86400);
-                        if (signedData?.signedUrl) finalUrl = signedData.signedUrl;
-                      } catch {}
-                      return {
-                        id: att.id,
-                        url: finalUrl,
-                        originalName: att.original_name || att.original_file_name || 'Attachment',
-                        mimeType: att.mime_type || 'application/octet-stream',
-                        sizeBytes: att.size_bytes || att.file_size_bytes || 0,
-                        kind: (att.attachment_kind as any) || (att.mime_type?.startsWith('image/')
-                          ? 'image'
-                          : att.mime_type?.startsWith('video/')
-                          ? 'video'
-                          : att.mime_type?.startsWith('audio/')
-                          ? 'audio'
-                          : 'document'),
-                      };
-                    })
-                  );
-                  setMessages((prev) =>
-                    prev.map((m) => (m.id === newMsg.id ? { ...m, attachments: resolved } : m))
-                  );
-                }
-              } catch (e) {
-                console.warn('Error resolving realtime attachments:', e);
-              }
-            })();
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload: any) => {
-          const updated = payload.new;
-          if (!updated) return;
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id === updated.id) {
-                const isRead = Boolean(updated.read_at || updated.message_status === 'read');
-                const isDelivered = Boolean(updated.delivered_at || updated.message_status === 'delivered');
-                return {
-                  ...m,
-                  status: isRead ? 'read' : isDelivered ? 'delivered' : m.status || 'sent',
-                  readAt: updated.read_at || m.readAt,
-                  deliveredAt: updated.delivered_at || m.deliveredAt,
-                  body: updated.body || m.body,
-                  reactions: updated.structured_payload?.reactions || m.reactions,
-                };
-              }
-              return m;
-            })
-          );
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'chat_participants',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload: any) => {
-          const updatedPart = payload.new;
-          if (updatedPart && updatedPart.user_id !== currentUser.id && updatedPart.last_read_at) {
-            const readTime = new Date(updatedPart.last_read_at).getTime();
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.senderUserId === currentUser.id) {
-                  const msgTime = new Date(m.sentAt).getTime();
-                  if (readTime >= msgTime) {
-                    return { ...m, status: 'read' };
-                  }
-                }
-                return m;
-              })
-            );
-          }
-        }
-      )
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          SyncCoordinator.setStatus('online');
-          try {
-            const deltaMsgs = await SyncCoordinator.executeDeltaSync(supabase, conversationId, currentUser?.id);
-            if (deltaMsgs && deltaMsgs.length > 0) {
-              setMessages((prev) => {
-                const existingIds = new Set(prev.map((m) => m.id));
-                const filteredNew = deltaMsgs.filter((m) => !existingIds.has(m.id));
-                return [...filteredNew, ...prev];
-              });
-            }
-          } catch (deltaErr) {
-            console.warn('[Realtime] Delta sync deferred:', deltaErr);
-          }
-          void flushPendingQueue();
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          SyncCoordinator.setStatus('offline');
-        }
-      });
-
-    return () => {
-      void supabase.removeChannel(presenceChannel);
-      void supabase.removeChannel(typingChannel);
-      void supabase.removeChannel(msgChannel);
-    };
-  }, [conversationId, currentUser, conversation?.partnerUserId, conversation?.partnerName]);
-
-  // Helper to retry sending a pending/rate-limited message
-  const retryPendingMessage = async (tempId: string, text: string, replySnapshot?: any) => {
-    if (!conversationId || !currentUser) return;
-    try {
-      if (!(await ensureParticipantAuthorization())) return;
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .insert({
-          conversation_id: conversationId,
-          sender_type: 'user',
-          sender_user_id: currentUser.id,
-          message_kind: 'text',
-          body: text,
-          intent: 'general',
-          structured_payload: replySnapshot ? {
-            replyTo: {
-              messageId: replySnapshot.id,
-              authorName: replySnapshot.authorName,
-              body: replySnapshot.body,
-            },
-          } : {},
-        })
-        .select('id, created_at')
-        .single();
-
-      if (error) throw error;
-      if (data) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, id: data.id, sentAt: data.created_at, status: 'sent' } : m))
-        );
-        await removePendingMessage(conversationId, tempId);
-        await OfflineEngine.removeOutbox(tempId);
-        await OfflineEngine.updateMessageStatus(conversationId, tempId, data.id, 'sent', data.created_at);
-      }
-    } catch (retryErr: any) {
-      console.warn('Pending message retry deferred:', retryErr?.message);
-    }
-  };
-
-  // Helper to flush offline pending queue on mount / reconnection
-  const flushPendingQueue = useCallback(async () => {
-    if (!conversationId || !currentUser) return;
-    try {
-      // 1. Drain rich outbox (text, media, voice notes)
-      await SyncCoordinator.drainOutbox(supabase, conversationId, (tempId, serverData) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === tempId
-              ? { ...m, id: serverData.id, sentAt: serverData.created_at, status: 'sent' }
-              : m
-          )
-        );
-      });
-
-      // 2. Drain legacy pending queue
-      const pending = await getPendingQueue(conversationId);
-      if (pending && pending.length > 0) {
-        for (const item of pending) {
-          await retryPendingMessage(item.id, item.body);
-        }
-      }
-    } catch (err) {
-      console.warn('Error flushing pending queue:', err);
-    }
-  }, [conversationId, currentUser]);
-
-  useEffect(() => {
-    if (currentUser && conversationId) {
-      flushPendingQueue();
-    }
-  }, [currentUser, conversationId, flushPendingQueue]);
-
-  // 6. Handle Composer text input & typing broadcast with 200k CCU throttling
-  const handleComposerTextChange = (text: string) => {
-    setComposerText(text);
-    if (!typingChannelRef.current || !currentUser) return;
-
-    if (text.length === 0) {
-      if (localTypingTimeoutRef.current) {
-        clearTimeout(localTypingTimeoutRef.current);
-        localTypingTimeoutRef.current = null;
-      }
-      lastTypingSentTimeRef.current = 0;
-      void typingChannelRef.current.send({
-        type: 'broadcast',
-        event: 'typing',
-        payload: { userId: currentUser.id, isTyping: false },
-      });
-      return;
-    }
-
-    const now = Date.now();
-    // Throttle broadcast to max once every 2 seconds while active
-    if (now - lastTypingSentTimeRef.current > 2000) {
-      lastTypingSentTimeRef.current = now;
-      void typingChannelRef.current.send({
-        type: 'broadcast',
-        event: 'typing',
-        payload: { userId: currentUser.id, isTyping: true },
-      });
-    }
-
-    // Auto-idle reset after 2.8s
-    if (localTypingTimeoutRef.current) clearTimeout(localTypingTimeoutRef.current);
-    localTypingTimeoutRef.current = setTimeout(() => {
-      if (typingChannelRef.current) {
-        void typingChannelRef.current.send({
-          type: 'broadcast',
-          event: 'typing',
-          payload: { userId: currentUser.id, isTyping: false },
-        });
-      }
-    }, 2800);
-  };
-
-  // 7. Send text message with resilient queue and rate limit interceptor
-  const handleSendMessage = async () => {
-    if (!composerText.trim() || !conversationId || !currentUser) return;
-    const text = composerText.trim();
-    const replySnapshot = replyingToMessage;
-
-    // Reset typing immediately
-    if (localTypingTimeoutRef.current) clearTimeout(localTypingTimeoutRef.current);
-    if (typingChannelRef.current) {
-      void typingChannelRef.current.send({
-        type: 'broadcast',
-        event: 'typing',
-        payload: { userId: currentUser.id, isTyping: false },
-      });
-    }
-
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setComposerText('');
-    setReplyingToMessage(null);
-
-    const tempId = `optimistic-${Date.now()}`;
-    const optimisticMsg: ChatMessage = {
-      id: tempId,
-      senderType: 'user',
-      senderUserId: currentUser.id,
-      authorName: 'You',
-      authorRoleLabel: 'You',
-      status: 'sending',
-      messageKind: 'text',
-      body: text,
-      sentAt: new Date().toISOString(),
-      intent: 'general',
-      structuredPayload: replySnapshot ? {
-        replyTo: {
-          messageId: replySnapshot.id,
-          authorName: replySnapshot.authorName,
-          body: replySnapshot.body,
-        },
-      } : {},
-    };
-
-    setMessages((prev) => [optimisticMsg, ...prev]);
-
-    try {
-      if (!(await ensureParticipantAuthorization())) {
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        return;
-      }
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .insert({
-          conversation_id: conversationId,
-          sender_type: 'user',
-          sender_user_id: currentUser.id,
-          message_kind: 'text',
-          body: text,
-          intent: 'general',
-          structured_payload: replySnapshot ? {
-            replyTo: {
-              messageId: replySnapshot.id,
-              authorName: replySnapshot.authorName,
-              body: replySnapshot.body,
-            },
-          } : {},
-        })
-        .select('id, created_at')
-        .single();
-
-      if (error) throw error;
-      if (data) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, id: data.id, sentAt: data.created_at, status: 'sent' } : m))
-        );
-        await removePendingMessage(conversationId, tempId);
-        await OfflineEngine.removeOutbox(tempId);
-        await OfflineEngine.updateMessageStatus(conversationId, tempId, data.id, 'sent', data.created_at);
-        void dispatchPushNotification({
-          conversationId,
-          messageId: data.id,
-          body: text,
-          senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
-          messageKind: 'text',
-        });
-      }
-    } catch (err: any) {
-      const errMsg = (err.message || '').toLowerCase();
-      const isRateLimited = errMsg.includes('rate_limit') || err.code === 'P0001';
-
-      if (isRateLimited) {
-        console.warn('[Rate Limit Exceeded] Cooldown engaged, preserving in pending queue');
-        setRateLimitCooldown(true);
-        setTimeout(() => setRateLimitCooldown(false), 4000);
-
-        // Keep message in list with 'sending' (clock) status and save to persistent queue
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, status: 'sending' } : m))
-        );
-        await addPendingMessage(conversationId, {
-          id: tempId,
-          body: text,
-          senderUserId: currentUser.id,
-          createdAt: optimisticMsg.sentAt,
-          messageKind: 'text',
-          isPending: true,
-        });
-        await OfflineEngine.enqueueOutbox({
-          id: tempId,
-          conversationId,
-          senderUserId: currentUser.id,
-          messageKind: 'text',
-          body: text,
-          intent: 'general',
-          structuredPayload: replySnapshot ? {
-            replyTo: {
-              messageId: replySnapshot.id,
-              authorName: replySnapshot.authorName,
-              body: replySnapshot.body,
-            },
-          } : {},
-          createdAt: optimisticMsg.sentAt,
-          retryCount: 0,
-          error: 'Rate limit exceeded',
-        });
-
-        // Auto-retry after 3.5s cooldown
-        setTimeout(async () => {
-          await retryPendingMessage(tempId, text, replySnapshot);
-        }, 3500);
-      } else {
-        // Network or DB error: preserve with error status for retry
-        console.warn('[Send Failed] Preserving in offline queue:', err);
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, status: 'error' } : m))
-        );
-        await addPendingMessage(conversationId, {
-          id: tempId,
-          body: text,
-          senderUserId: currentUser.id,
-          createdAt: optimisticMsg.sentAt,
-          messageKind: 'text',
-          isPending: true,
-        });
-        await OfflineEngine.enqueueOutbox({
-          id: tempId,
-          conversationId,
-          senderUserId: currentUser.id,
-          messageKind: 'text',
-          body: text,
-          intent: 'general',
-          structuredPayload: replySnapshot ? {
-            replyTo: {
-              messageId: replySnapshot.id,
-              authorName: replySnapshot.authorName,
-              body: replySnapshot.body,
-            },
-          } : {},
-          createdAt: optimisticMsg.sentAt,
-          retryCount: 0,
-          error: err?.message,
-        });
-      }
-    }
-  };
-
-  // 8. Send Voice Note
-  const handleSendVoiceNote = async (duration: number, audioUri?: string) => {
-    if (!conversationId || !currentUser || !audioUri || duration <= 0) return;
-    const cleanDuration = Math.max(1, Math.round(duration));
-
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const tempId = `optimistic-vn-${Date.now()}`;
-    const optimisticMsg: ChatMessage = {
-      id: tempId,
-      senderType: 'user',
-      senderUserId: currentUser.id,
-      authorName: 'You',
-      authorRoleLabel: 'You',
-      status: 'sending',
-      messageKind: 'voice_note',
-      body: 'Voice note',
-      sentAt: new Date().toISOString(),
-      intent: 'general',
-      structuredPayload: {
-        voiceNote: {
-          durationSeconds: cleanDuration,
-          audioUrl: audioUri,
-          localUri: audioUri,
-        },
-      },
-    };
-
-    setMessages((prev) => [optimisticMsg, ...prev]);
-
-    try {
-      if (!(await ensureParticipantAuthorization())) {
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        return;
-      }
-      const fileName = `vn_${Date.now()}_${Math.random().toString(36).substring(7)}.m4a`;
-      const { signedUrl, error: uploadErr } = await uploadLocalFileToSupabaseStorage(
-        supabase,
-        'chat-attachments',
-        fileName,
-        audioUri,
-        'audio/m4a'
-      );
-
-      if (uploadErr || !signedUrl) {
-        throw new Error(uploadErr?.message || 'Failed to upload voice note to cloud storage');
-      }
-
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .insert({
-          conversation_id: conversationId,
-          sender_type: 'user',
-          sender_user_id: currentUser.id,
-          message_kind: 'voice_note',
-          body: 'Voice note',
-          intent: 'general',
-          structured_payload: {
-            voiceNote: {
-              durationSeconds: cleanDuration,
-              audioUrl: signedUrl,
-              localUri: audioUri,
-            },
-          },
-        })
-        .select('id, created_at')
-        .single();
-
-      if (error) throw error;
-      if (data) {
-        try {
-          await supabase.from('chat_message_attachments').insert({
-            message_id: data.id,
-            attachment_kind: 'audio',
-            storage_bucket: 'chat-attachments',
-            storage_path: fileName,
-            original_name: fileName,
-            safe_name: fileName,
-            mime_type: 'audio/m4a',
-            size_bytes: 0,
-            scan_status: 'passed',
-          });
-        } catch (attErr) {
-          console.warn('Voice note attachment insert warning:', attErr);
-        }
-
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, id: data.id, sentAt: data.created_at, status: 'sent' } : m))
-        );
-        await OfflineEngine.removeOutbox(tempId);
-        await OfflineEngine.updateMessageStatus(conversationId, tempId, data.id, 'sent', data.created_at);
-        void dispatchPushNotification({
-          conversationId,
-          messageId: data.id,
-          body: '🎤 Sent a voice note',
-          senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
-          messageKind: 'voice_note',
-        });
-      }
-    } catch (err: any) {
-      console.warn('[Voice Note Offline] Preserving in outbox queue:', err);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === tempId ? { ...m, status: 'sending' } : m))
-      );
-      await OfflineEngine.enqueueOutbox({
-        id: tempId,
-        conversationId,
-        senderUserId: currentUser.id,
-        messageKind: 'voice_note',
-        body: 'Voice note',
-        localMediaUri: audioUri,
-        durationSeconds: cleanDuration,
-        mediaKind: 'audio',
-        mimeType: 'audio/m4a',
-        createdAt: optimisticMsg.sentAt,
-        retryCount: 0,
-        error: err?.message,
-      });
-    }
-  };
-
-  // 9. Attachments Picker Suite
-  const handleSelectAttachment = async (type: ChatAttachmentActionType) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      if (type === 'media') {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permission required', 'Please allow media library access to send attachments.');
-          return;
-        }
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.All,
-          allowsMultipleSelection: true,
-          quality: 0.85,
-        });
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-          setStagedMediaAssets(result.assets);
-          setMediaPreviewVisible(true);
-        }
-      } else if (type === 'photo') {
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permission required', 'Please allow camera access to take photos.');
-          return;
-        }
-        const result = await ImagePicker.launchCameraAsync({
-          quality: 0.85,
-        });
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-          setStagedMediaAssets(result.assets);
-          setMediaPreviewVisible(true);
-        }
-      } else if (type === 'document') {
-        const docRes = await DocumentPicker.getDocumentAsync({
-          type: '*/*',
-          copyToCacheDirectory: true,
-        });
-        if (!docRes.canceled && docRes.assets && docRes.assets.length > 0) {
-          const doc = docRes.assets[0];
-          await handleSendDocument(doc);
-        }
-      } else if (type === 'catalog') {
-        setCatalogModalVisible(true);
-      } else if (type === 'form') {
-        setInquiryFormModalVisible(true);
-      } else if (type === 'embed') {
-        setEmbedModalVisible(true);
-      } else if (type === 'lead') {
-        await handleConvertToLead();
-      }
-    } catch (err: any) {
-      Alert.alert('Attachment Error', err.message);
-    }
-  };
-
-  // Send document helper
-  const handleSendDocument = async (doc: DocumentPicker.DocumentPickerAsset) => {
-    if (!conversationId || !currentUser) return;
-    try {
-      if (!(await ensureParticipantAuthorization())) return;
-      const fileName = `doc_${Date.now()}_${doc.name}`;
-      const mime = doc.mimeType || 'application/pdf';
-      const { signedUrl, error: uploadErr } = await uploadLocalFileToSupabaseStorage(
-        supabase,
-        'chat-attachments',
-        fileName,
-        doc.uri,
-        mime
-      );
-      if (uploadErr || !signedUrl) {
-        throw new Error(uploadErr?.message || 'Failed to upload document');
-      }
-
-      const { data: msgRow, error: msgErr } = await supabase
-        .from('chat_messages')
-        .insert({
-          conversation_id: conversationId,
-          sender_type: 'user',
-          sender_user_id: currentUser.id,
-          message_kind: 'attachments',
-          body: doc.name || 'Document Attached',
-          intent: 'general',
-          structured_payload: {
-            document: {
-              name: doc.name,
-              size: doc.size,
-              mimeType: mime,
-              url: signedUrl,
-            },
-            attachments: [
-              {
-                url: signedUrl,
-                kind: 'document',
-                originalName: doc.name,
-                sizeBytes: doc.size || 0,
-                mimeType: mime,
-              },
-            ],
-          },
-        })
-        .select('id, created_at')
-        .single();
-
-      if (msgErr) throw msgErr;
-
-      if (msgRow) {
-        try {
-          await supabase.from('chat_message_attachments').insert({
-            message_id: msgRow.id,
-            attachment_kind: 'document',
-            storage_bucket: 'chat-attachments',
-            storage_path: fileName,
-            original_name: doc.name || fileName,
-            safe_name: fileName,
-            mime_type: mime,
-            size_bytes: doc.size || 0,
-            scan_status: 'passed',
-          });
-        } catch (attErr) {
-          console.warn('Document attachment insert warning:', attErr);
-        }
-
-        void dispatchPushNotification({
-          conversationId,
-          messageId: msgRow.id,
-          body: `📎 ${doc.name || 'Document Attached'}`,
-          senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
-          messageKind: 'attachments',
-        });
-      }
-
-      fetchMessages();
-    } catch (e: any) {
-      Alert.alert('Upload Error', e.message);
-    }
-  };
-
-  // Send embed helper (cross-platform modal)
-  const handleSendEmbed = async (embedUrl: string, title?: string) => {
-    if (!conversationId || !currentUser) return;
-    try {
-      if (!(await ensureParticipantAuthorization())) return;
-      const displayTitle = title || '3D Virtual Tour Embed';
-      await supabase.from('chat_messages').insert({
-        conversation_id: conversationId,
-        sender_type: 'user',
-        sender_user_id: currentUser.id,
-        message_kind: 'embed',
-        body: displayTitle,
-        intent: 'tour',
-        structured_payload: {
-          embed: {
-            title: displayTitle,
-            url: embedUrl,
-          },
+  // 1. Modals state machine (12 boolean flags replaced with discriminated union)
+  const modals = useThreadModals();
+
+  // 2. Session, BOLA authorization, profile identity & lead management
+  const session = useThreadSession({
+    conversationId,
+    partnerNameParam: params.partnerName,
+    titleParam: params.title,
+  });
+
+  // 3. Realtime presence & typing synchronization
+  const {
+    isPartnerOnline,
+    isPartnerTyping,
+    lastSeenText,
+    sendTyping,
+    clearPartnerTyping,
+    handleComposerTextChange,
+  } = useThreadPresence({
+    conversationId: conversationId || null,
+    currentUserId: session.currentUser?.id || null,
+    partnerUserId: session.conversation?.partnerUserId || null,
+    initialLastSeenAt: session.conversation?.partnerLastSeenAt || null,
+    fallbackSubtitle: session.conversation?.partnerSubtitle || 'DeltanHub Direct',
+  });
+
+  // 4. Messages lifecycle, keyset pagination, CDC realtime & reactions
+  const messages = useThreadMessages({
+    conversationId,
+    currentUser: session.currentUser,
+    partnerName: session.conversation?.partnerName || params.partnerName,
+    ensureParticipantAuthorization: session.ensureParticipantAuthorization,
+    clearPartnerTyping,
+    sendTyping,
+  });
+
+  // 5. Media attachments & voice notes pipeline
+  const media = useThreadMedia({
+    conversationId,
+    currentUser: session.currentUser,
+    ensureParticipantAuthorization: session.ensureParticipantAuthorization,
+    onMediaSent: messages.fetchMessages,
+    onAddOptimisticMessage: messages.addOptimisticMessage,
+    onUpdateOptimisticMessage: messages.updateOptimisticMessage,
+    onRemoveOptimisticMessage: messages.removeOptimisticMessage,
+  });
+
+  // WebRTC Calling Launchers
+  const startCall = useCallback(
+    (kind: 'audio' | 'video') => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (!conversationId || !session.currentUser) return;
+      router.push({
+        pathname: '/call/[id]',
+        params: {
+          id: conversationId,
+          kind,
+          role: 'initiator',
         },
       });
-      fetchMessages();
-    } catch (e: any) {
-      Alert.alert('Embed Error', e.message);
-    }
-  };
+    },
+    [conversationId, session.currentUser, router]
+  );
 
-  // Send property catalog listing helper
-  const handleSendCatalogListing = async (listing: SelectedListing) => {
-    if (!conversationId || !currentUser) return;
-    try {
-      if (!(await ensureParticipantAuthorization())) return;
-      await supabase.from('chat_messages').insert({
-        conversation_id: conversationId,
-        sender_type: 'user',
-        sender_user_id: currentUser.id,
-        message_kind: 'listing_card',
-        body: `Property Shared: ${listing.title}`,
-        intent: 'general',
-        structured_payload: {
-          listingCard: {
-            id: listing.id,
-            title: listing.title,
-            price: listing.price,
-            location: listing.location,
-            imageUrl: listing.imageUrl,
-            referenceCode: listing.referenceCode,
-            status: listing.listingStatus,
-          },
-        },
-      });
-      fetchMessages();
-    } catch (e: any) {
-      Alert.alert('Catalog Error', e.message);
-    }
-  };
-
-  // Send inquiry form questionnaire helper
-  const handleSendInquiryTemplate = async (tmpl: SelectedInquiryTemplate) => {
-    if (!conversationId || !currentUser) return;
-    try {
-      if (!(await ensureParticipantAuthorization())) return;
-      await supabase.from('chat_messages').insert({
-        conversation_id: conversationId,
-        sender_type: 'user',
-        sender_user_id: currentUser.id,
-        message_kind: 'inquiry_form',
-        body: `Inquiry Questionnaire: ${tmpl.templateTitle}`,
-        intent: 'general',
-        structured_payload: {
-          inquiryFormCard: {
-            templateId: tmpl.templateId,
-            templateTitle: tmpl.templateTitle,
-            fields: tmpl.fields,
-          },
-        },
-      });
-      fetchMessages();
-    } catch (e: any) {
-      Alert.alert('Inquiry Form Error', e.message);
-    }
-  };
-
-  // Header Actions
-  const handleConvertToLead = async () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    try {
-      const partnerId = conversation?.partnerUserId || params.partnerName;
-      await supabase.from('crm_inquiries').insert({
-        conversation_id: conversationId,
-        buyer_user_id: conversation?.partnerUserId || currentUser.id,
-        agency_user_id: currentUser.id,
-        company_user_id: currentUser.id,
-        lead_name: conversation?.partnerName || params.partnerName || 'Client Lead',
-        inquiry_status: 'active',
-        master_lead_status: 'new',
-      });
-      Alert.alert('Lead Created', 'This conversation has been added to your CRM pipeline.');
-    } catch (e: any) {
-      Alert.alert('CRM Lead', 'Conversation registered with your CRM pipeline.');
-    }
-  };
-
-  const handleToggleArchive = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      const isArchived = Boolean(conversation?.isArchived);
-      await supabase
-        .from('chat_participants')
-        .update({ archived_at: isArchived ? null : new Date().toISOString() })
-        .eq('conversation_id', conversationId)
-        .eq('user_id', currentUser.id);
-      Alert.alert('Archive', isArchived ? 'Conversation unarchived' : 'Conversation moved to archive');
-      setConversation((prev: any) => prev ? { ...prev, isArchived: !isArchived } : prev);
-    } catch (e: any) {
-      Alert.alert('Archive Error', e.message);
-    }
-  };
-
-  const handleToggleMute = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      const isMuted = Boolean(conversation?.isMuted);
-      const muteUntil = isMuted ? null : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-      await supabase
-        .from('chat_participants')
-        .update({ muted_until: muteUntil })
-        .eq('conversation_id', conversationId)
-        .eq('user_id', currentUser.id);
-      Alert.alert('Mute', isMuted ? 'Notifications unmuted' : 'Notifications muted for 1 year');
-      setConversation((prev: any) => prev ? { ...prev, isMuted: !isMuted } : prev);
-    } catch (e: any) {
-      Alert.alert('Mute Error', e.message);
-    }
-  };
-
-  const handleToggleBlock = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const partnerId = conversation?.partnerUserId;
-    Alert.alert(
-      'Block User',
-      `Block ${conversation?.partnerName || 'this user'} from messaging or calling you?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Block User',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (partnerId) {
-                await supabase.from('user_blocks').insert({
-                  blocker_user_id: currentUser.id,
-                  blocked_user_id: partnerId,
-                });
-              }
-              Alert.alert('User Blocked', 'This user has been blocked.');
-              router.back();
-            } catch (e: any) {
-              Alert.alert('Block Error', e.message);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleSubmitReport = async (reason: string, details: string) => {
-    try {
-      const partnerId = conversation?.partnerUserId;
-      await supabase.from('chat_reports').insert({
-        conversation_id: conversationId,
-        reported_by_user_id: currentUser.id,
-        reported_user_id: partnerId || null,
-        reason,
-        details: details || null,
-      });
-      Alert.alert('Report Submitted', 'Thank you. Our Trust & Safety team will review this report.');
-    } catch {
-      try {
-        await fetchWithAuth('/api/chats/report', {
-          method: 'POST',
-          body: JSON.stringify({
-            inquiryId: conversationId,
-            reason,
-            details,
-            messagesConsent: true,
-          }),
-        });
-        Alert.alert('Report Submitted', 'Thank you. Our moderation team has received your report.');
-      } catch {
-        Alert.alert('Report Logged', 'Your report has been received by trust and safety.');
+  // Attachment Sheet Dispatcher
+  const handleSelectAttachment = useCallback(
+    async (type: ChatAttachmentActionType) => {
+      switch (type) {
+        case 'media':
+          await media.handlePickMedia();
+          break;
+        case 'photo':
+          await media.handleLaunchCamera();
+          break;
+        case 'document':
+          await media.handlePickDocument();
+          break;
+        case 'catalog':
+          modals.openModal('catalog');
+          break;
+        case 'form':
+          modals.openModal('inquiry_form');
+          break;
+        case 'embed':
+          modals.openModal('embed');
+          break;
+        case 'lead':
+          await session.handleConvertToLead();
+          break;
+        case 'assign-agent':
+          modals.openModal('assignment');
+          break;
       }
-    }
-  };
-
-  // Send staged media from preview modal
-  const handleSendStagedMedia = async (assets: ImagePicker.ImagePickerAsset[], caption: string) => {
-    if (!conversationId || !currentUser || assets.length === 0) return;
-    setIsUploadingMedia(true);
-    try {
-      if (!(await ensureParticipantAuthorization())) {
-        setIsUploadingMedia(false);
-        return;
-      }
-      for (const asset of assets) {
-        const isVideo = asset.type === 'video' || asset.uri.endsWith('.mp4');
-        const ext = isVideo ? 'mp4' : 'jpg';
-        const fileName = `media_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
-        const mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
-        const { signedUrl, error: uploadErr } = await uploadLocalFileToSupabaseStorage(
-          supabase,
-          'chat-attachments',
-          fileName,
-          asset.uri,
-          mimeType
-        );
-        if (uploadErr || !signedUrl) {
-          throw new Error(uploadErr?.message || 'Failed to upload media');
-        }
-
-        const { data: msgRow, error: msgErr } = await supabase
-          .from('chat_messages')
-          .insert({
-            conversation_id: conversationId,
-            sender_type: 'user',
-            sender_user_id: currentUser.id,
-            message_kind: 'attachments',
-            body: caption.trim() || (isVideo ? 'Video attachment' : 'Photo attachment'),
-            intent: 'general',
-            structured_payload: {
-              attachments: [
-                {
-                  url: signedUrl,
-                  kind: isVideo ? 'video' : 'image',
-                  originalName: asset.fileName || fileName,
-                  sizeBytes: asset.fileSize || 0,
-                  mimeType,
-                },
-              ],
-            },
-          })
-          .select('id, created_at')
-          .single();
-
-        if (msgErr) throw msgErr;
-
-        if (msgRow) {
-          try {
-            await supabase.from('chat_message_attachments').insert({
-              message_id: msgRow.id,
-              attachment_kind: isVideo ? 'video' : 'image',
-              storage_bucket: 'chat-attachments',
-              storage_path: fileName,
-              original_name: asset.fileName || fileName,
-              safe_name: fileName,
-              mime_type: mimeType,
-              size_bytes: asset.fileSize || 0,
-              scan_status: 'passed',
-            });
-          } catch (attErr) {
-            console.warn('Media attachment insert warning:', attErr);
-          }
-
-          void dispatchPushNotification({
-            conversationId,
-            messageId: msgRow.id,
-            body: caption.trim() || (isVideo ? '🎥 Sent a video' : '📷 Sent a photo'),
-            senderName: currentUser.user_metadata?.full_name || currentUser.user_metadata?.display_name || 'Member',
-            messageKind: 'attachments',
-          });
-        }
-      }
-      setMediaPreviewVisible(false);
-      fetchMessages();
-    } catch (e: any) {
-      Alert.alert('Media Upload Error', e.message);
-    } finally {
-      setIsUploadingMedia(false);
-    }
-  };
-
-  // 10. Reactions & Message Actions
-  const handleReactToMessage = async (messageId: string, emoji: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      const msg = messages.find((m) => m.id === messageId);
-      if (!msg) return;
-
-      const currentReactions: Record<string, string[]> = { ...(msg.reactions || {}) };
-      const usersForEmoji = currentReactions[emoji] || [];
-
-      if (usersForEmoji.includes(currentUser.id)) {
-        currentReactions[emoji] = usersForEmoji.filter((uid) => uid !== currentUser.id);
-        if (currentReactions[emoji].length === 0) {
-          delete currentReactions[emoji];
-        }
-      } else {
-        currentReactions[emoji] = [...usersForEmoji, currentUser.id];
-      }
-
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, reactions: currentReactions } : m))
-      );
-
-      const { data: updatedReactions, error } = await supabase.rpc('toggle_chat_message_reaction', {
-        p_message_id: messageId,
-        p_emoji: emoji,
-      });
-
-      if (error) throw error;
-
-      if (updatedReactions) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === messageId ? { ...m, reactions: updatedReactions } : m))
-        );
-      }
-    } catch (e) {
-      console.warn('Failed to update reaction via RPC', e);
-      fetchMessages();
-    }
-  };
-
-  const handleToggleStar = async (messageId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      const isCurrentlyStarred = starredMsgIds.has(messageId);
-
-      setStarredMsgIds((prev) => {
-        const next = new Set(prev);
-        if (isCurrentlyStarred) {
-          next.delete(messageId);
-        } else {
-          next.add(messageId);
-        }
-        return next;
-      });
-
-      const { error } = await supabase.rpc('toggle_chat_message_star', {
-        p_message_id: messageId,
-      });
-
-      if (error) throw error;
-    } catch (e: any) {
-      console.warn('Failed to toggle star via RPC', e);
-    }
-  };
-
-  const handleDeleteMessage = async (messageId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      await supabase.from('chat_messages').delete().eq('id', messageId);
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
-    }
-  };
-
-  // 11. WebRTC Calling Triggers
-  const startCall = (kind: 'audio' | 'video') => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (!conversationId || !currentUser) return;
-    router.push({
-      pathname: '/call/[id]',
-      params: {
-        id: conversationId,
-        kind,
-        role: 'initiator',
-      },
-    });
-  };
+    },
+    [media, modals, session]
+  );
 
   return (
     <AnimatedPageWrapper>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <StatusBar style={isDark ? 'light' : 'dark'} translucent backgroundColor="transparent" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
         {/* Chat Header */}
         <ChatHeader
-          partnerName={conversation?.partnerName || params.partnerName || 'Loading...'}
-          partnerAvatarUrl={conversation?.partnerAvatarUrl || null}
-          subtitle={conversation?.partnerSubtitle || 'DeltanHub Direct'}
+          partnerName={session.conversation?.partnerName || params.partnerName || 'Loading...'}
+          partnerAvatarUrl={session.conversation?.partnerAvatarUrl || null}
+          subtitle={session.conversation?.partnerSubtitle || 'DeltanHub Direct'}
           isTyping={isPartnerTyping}
           isOnline={isPartnerOnline}
-          lastSeenText={isPartnerOnline ? 'Active now' : partnerLastSeen ? 'Offline' : null}
+          lastSeenText={lastSeenText}
           canSendMessages={true}
           onBack={() => router.back()}
           onAudioCall={() => startCall('audio')}
           onVideoCall={() => startCall('video')}
-          onOpenChatInfo={() => setChatInfoVisible(true)}
-          onViewStarred={() => setStarredModalVisible(true)}
-          onOpenInternalNotes={() => setInternalNotesModalVisible(true)}
-          onAddAsLead={handleConvertToLead}
-          onToggleArchive={handleToggleArchive}
-          onToggleMute={handleToggleMute}
-          onToggleBlock={handleToggleBlock}
-          onReportAgent={() => setReportModalVisible(true)}
-          onManageAssignment={() => setAssignmentModalVisible(true)}
-          canManageAssignment={true}
-          presenceStatus={AgentPresence.getStatus()}
-          isGroup={(conversation as any)?.isGroup || false}
-          participantCount={(conversation as any)?.participantCount}
+          onOpenChatInfo={() => modals.openModal('chat_info')}
+          onViewStarred={() => modals.openModal('starred')}
+          onOpenInternalNotes={() => modals.openModal('internal_notes')}
+          onAddAsLead={session.handleConvertToLead}
+          onToggleArchive={session.handleToggleArchive}
+          onToggleMute={session.handleToggleMute}
+          onToggleBlock={session.handleToggleBlock}
+          onReportAgent={() => modals.openModal('report')}
+          onManageAssignment={() => modals.openModal('assignment')}
+          canManageAssignment={canAssignAgents(session.currentProfile?.mainRole)}
+          hasAssignment={Boolean(session.conversation?.assignment)}
+          isGroup={session.conversation?.isGroup || false}
+          participantCount={session.conversation?.participantCount}
         />
 
         {/* Realtime Network Connectivity & Delta-Sync Banner */}
         <ConnectionBanner />
+
+        {/* In-Thread Lead Management Strip */}
+        {session.conversation?.assignment && (
+          <View
+            style={[
+              styles.leadStripContainer,
+              { backgroundColor: colors.card, borderBottomColor: colors.border },
+            ]}
+          >
+            <View style={styles.leadStripTop}>
+              {/* Quick Pipeline Status Pill */}
+              {(() => {
+                const currentAssignmentStatus = session.conversation.assignment.status;
+                const normStatus =
+                  currentAssignmentStatus === 'closed'
+                    ? 'closed_won'
+                    : currentAssignmentStatus === 'lost'
+                    ? 'closed_lost'
+                    : currentAssignmentStatus;
+                const statusMeta =
+                  STATUS_PIPELINE.find((s) => s.value === normStatus) || STATUS_PIPELINE[0];
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      modals.openModal('lead_status');
+                    }}
+                    style={[
+                      styles.leadStripStatusBadge,
+                      { backgroundColor: isDark ? statusMeta.bgDark : statusMeta.bgLight },
+                    ]}
+                  >
+                    <View style={[styles.leadStripStatusDot, { backgroundColor: statusMeta.color }]} />
+                    <Text style={[styles.leadStripStatusText, { color: statusMeta.color }]}>
+                      {statusMeta.label.toUpperCase()}
+                    </Text>
+                    <Ionicons
+                      name="chevron-down"
+                      size={11}
+                      color={statusMeta.color}
+                      style={{ marginLeft: 3 }}
+                    />
+                  </TouchableOpacity>
+                );
+              })()}
+
+              {/* Assignment / Broker Controls */}
+              <View style={styles.leadStripActions}>
+                {canAssignAgents(session.currentProfile?.mainRole) ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      modals.openModal('assignment');
+                    }}
+                    style={[
+                      styles.leadStripPillBtn,
+                      { backgroundColor: isDark ? '#262626' : colors.primarySoft },
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        session.conversation.assignment.assignedAgentUserId
+                          ? 'person'
+                          : 'person-add-outline'
+                      }
+                      size={13}
+                      color={colors.primary}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={[styles.leadStripPillText, { color: colors.primary }]} numberOfLines={1}>
+                      {session.conversation.assignment.assignedAgentUserId
+                        ? session.conversation.assignment.assignedAgentName
+                        : 'Assign Agent'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : session.conversation.assignment.assignedAgentUserId === session.currentUser?.id ? (
+                  <View
+                    style={[
+                      styles.leadStripPillBtn,
+                      { backgroundColor: isDark ? '#064e3b' : '#ecfdf5' },
+                    ]}
+                  >
+                    <Ionicons
+                      name="shield-checkmark"
+                      size={13}
+                      color="#10b981"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={[styles.leadStripPillText, { color: '#10b981', fontWeight: '700' }]}>
+                      Assigned to You
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Confidential Lead Notes Button */}
+                {(canAssignAgents(session.currentProfile?.mainRole) ||
+                  session.conversation.assignment.assignedAgentUserId === session.currentUser?.id) && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      modals.openModal('internal_notes');
+                    }}
+                    style={[
+                      styles.leadStripIconBtn,
+                      { backgroundColor: isDark ? '#262626' : '#f1f5f9' },
+                    ]}
+                    accessibilityLabel="Confidential internal notes"
+                  >
+                    <Ionicons name="lock-closed-outline" size={14} color={colors.text} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Assigned Agent Share Control Row */}
+            {session.conversation.assignment.assignedAgentUserId === session.currentUser?.id && (
+              <TouchableOpacity
+                onPress={session.handleToggleInThreadAgentShare}
+                style={[
+                  styles.leadStripShareBanner,
+                  {
+                    backgroundColor: session.conversation.assignment.agentShareEnabled
+                      ? isDark
+                        ? '#064e3b'
+                        : '#ecfdf5'
+                      : isDark
+                      ? '#1f2937'
+                      : '#f8fafc',
+                    borderColor: session.conversation.assignment.agentShareEnabled
+                      ? '#10b981'
+                      : colors.border,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={session.conversation.assignment.agentShareEnabled ? 'eye' : 'eye-off'}
+                  size={13}
+                  color={
+                    session.conversation.assignment.agentShareEnabled
+                      ? '#10b981'
+                      : colors.placeholder
+                  }
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.leadStripShareText,
+                    {
+                      color: session.conversation.assignment.agentShareEnabled
+                        ? '#10b981'
+                        : colors.placeholder,
+                    },
+                  ]}
+                >
+                  {session.conversation.assignment.agentShareEnabled
+                    ? 'Thread shared with Agency Principal'
+                    : 'Private thread (Tap to share with Agency)'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Manager Handoff Note Box */}
+            {session.conversation.assignment.handoffNote ? (
+              <View
+                style={[
+                  styles.leadStripHandoffBox,
+                  {
+                    backgroundColor: isDark ? '#261a0f' : '#fffbeb',
+                    borderColor: isDark ? '#78350f' : '#fde68a',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="clipboard-outline"
+                  size={13}
+                  color="#d97706"
+                  style={{ marginRight: 6, marginTop: 1 }}
+                />
+                <Text
+                  style={[styles.leadStripHandoffText, { color: isDark ? '#fde68a' : '#92400e' }]}
+                  numberOfLines={2}
+                >
+                  <Text style={{ fontWeight: '700' }}>Handoff: </Text>
+                  {session.conversation.assignment.handoffNote}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        )}
 
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -1822,24 +408,24 @@ export default function ThreadScreen() {
           keyboardVerticalOffset={0}
         >
           {/* Messages Feed */}
-          {loadingMessages ? (
+          {messages.loadingMessages ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
             </View>
           ) : (
             <FlatList
               ref={flatListRef}
-              data={messages}
+              data={messages.messages}
               keyExtractor={(item) => item.id}
               inverted
-              onEndReached={loadMoreMessages}
+              onEndReached={messages.loadMoreMessages}
               onEndReachedThreshold={0.35}
               initialNumToRender={20}
               maxToRenderPerBatch={15}
               windowSize={11}
               removeClippedSubviews={Platform.OS === 'android'}
               ListFooterComponent={
-                loadingMore ? (
+                messages.loadingMore ? (
                   <View style={{ paddingVertical: 14, alignItems: 'center' }}>
                     <ActivityIndicator size="small" color={colors.primary} />
                   </View>
@@ -1848,41 +434,17 @@ export default function ThreadScreen() {
               renderItem={({ item }) => (
                 <MessageBubble
                   message={item}
-                  isCurrentUser={item.senderUserId === currentUser?.id}
-                  isStarred={starredMsgIds.has(item.id)}
+                  isCurrentUser={item.senderUserId === session.currentUser?.id}
+                  isStarred={messages.starredMsgIds.has(item.id)}
                   onLongPressMessage={(msg: ChatMessage) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    setActionModalMessage(msg);
-                    setActionModalVisible(true);
+                    modals.openActionModal(msg);
                   }}
-                  onReactToMessage={(messageId: string, emoji: string) => {
-                    void handleReactToMessage(messageId, emoji);
-                  }}
-                  onPressMedia={(url: string, kind: string) => {
-                    setMediaViewerUrl(url);
-                    setMediaViewerKind(kind === 'video' ? 'video' : 'image');
-                    setMediaViewerVisible(true);
-                  }}
-                  onSendInquiryResponse={async (answers) => {
-                    await supabase.from('chat_messages').insert({
-                      conversation_id: conversationId,
-                      sender_type: 'user',
-                      sender_user_id: currentUser.id,
-                      message_kind: 'inquiry_response',
-                      body: 'Inquiry questionnaire answers submitted',
-                      intent: 'general',
-                      structured_payload: {
-                        inquiryResponseCard: {
-                          templateTitle: 'Inquiry Questionnaire',
-                          answers: Object.entries(answers).map(([label, val]) => ({
-                            label,
-                            value: String(val),
-                          })),
-                        },
-                      },
-                    });
-                    fetchMessages();
-                  }}
+                  onReactToMessage={messages.handleReactToMessage}
+                  onPressMedia={(url: string, kind: string) =>
+                    media.openMediaViewer(url, kind === 'video' ? 'video' : 'image')
+                  }
+                  onSendInquiryResponse={messages.handleSendInquiryResponse}
                 />
               )}
               contentContainerStyle={[
@@ -1893,7 +455,7 @@ export default function ThreadScreen() {
           )}
 
           {/* Rate Limit Cooldown Notice */}
-          {rateLimitCooldown && (
+          {messages.rateLimitCooldown && (
             <View style={styles.rateLimitBanner}>
               <Ionicons name="hourglass-outline" size={14} color="#d97706" style={{ marginRight: 6 }} />
               <Text style={styles.rateLimitBannerText}>
@@ -1904,157 +466,234 @@ export default function ThreadScreen() {
 
           {/* Chat Composer */}
           <ChatComposer
-            value={composerText}
-            onChangeText={handleComposerTextChange}
-            onSend={handleSendMessage}
-            onSendVoiceNote={handleSendVoiceNote}
+            value={messages.composerText}
+            onChangeText={(text) => {
+              messages.setComposerText(text);
+              handleComposerTextChange(text);
+            }}
+            onSend={messages.handleSendMessage}
+            onSendVoiceNote={media.handleSendVoiceNote}
             onSelectAttachment={handleSelectAttachment}
-            replyingToMessage={replyingToMessage ? {
-              id: replyingToMessage.id,
-              authorName: replyingToMessage.authorName,
-              body: replyingToMessage.body,
-            } : null}
-            onCancelReply={() => setReplyingToMessage(null)}
+            replyingToMessage={
+              messages.replyingToMessage
+                ? {
+                    id: messages.replyingToMessage.id,
+                    authorName: messages.replyingToMessage.authorName,
+                    body: messages.replyingToMessage.body,
+                  }
+                : null
+            }
+            onCancelReply={() => messages.setReplyingToMessage(null)}
           />
         </KeyboardAvoidingView>
 
         {/* Message Action Sheet Modal */}
         <MessageActionModal
-          visible={actionModalVisible}
-          message={actionModalMessage}
-          isCurrentUser={actionModalMessage?.senderUserId === currentUser?.id}
-          isStarred={actionModalMessage ? starredMsgIds.has(actionModalMessage.id) : false}
-          onClose={() => setActionModalVisible(false)}
+          visible={modals.isActionVisible}
+          message={modals.actionMessage}
+          isCurrentUser={modals.actionMessage?.senderUserId === session.currentUser?.id}
+          isStarred={modals.actionMessage ? messages.starredMsgIds.has(modals.actionMessage.id) : false}
+          onClose={modals.closeModal}
           onReact={(emoji: string) => {
-            if (actionModalMessage) handleReactToMessage(actionModalMessage.id, emoji);
+            if (modals.actionMessage) messages.handleReactToMessage(modals.actionMessage.id, emoji);
           }}
-          onReply={(msg: ChatMessage) => setReplyingToMessage(msg)}
-          onStarToggle={(msgId: string) => handleToggleStar(msgId)}
+          onReply={(msg: ChatMessage) => messages.setReplyingToMessage(msg)}
+          onStarToggle={(msgId: string) => messages.handleToggleStar(msgId)}
           onAskAI={(msg: ChatMessage) => {
-            setAskAIMessage(msg);
-            setAskAIModalVisible(true);
+            modals.openAskAIModal(msg);
           }}
-          onDelete={(msgId: string) => handleDeleteMessage(msgId)}
+          onDelete={(msgId: string) => messages.handleDeleteMessage(msgId)}
         />
 
-      {/* Chat Info Modal */}
-      <ChatInfoModal
-        visible={chatInfoVisible}
-        conversation={conversation}
-        messagesCount={messages.length}
-        onClose={() => setChatInfoVisible(false)}
-        onAddAsLead={handleConvertToLead}
-        onToggleArchive={handleToggleArchive}
-        onViewStarred={() => setStarredModalVisible(true)}
-      />
+        {/* Chat Info Modal */}
+        <ChatInfoModal
+          visible={modals.isChatInfoVisible}
+          conversation={session.conversation}
+          messagesCount={messages.messages.length}
+          onClose={modals.closeModal}
+          onAddAsLead={session.handleConvertToLead}
+          onToggleArchive={session.handleToggleArchive}
+          onViewStarred={() => modals.openModal('starred')}
+        />
 
-      {/* Media Preview Modal */}
-      <MediaPreviewModal
-        visible={mediaPreviewVisible}
-        assets={stagedMediaAssets}
-        isSending={isUploadingMedia}
-        onCancel={() => setMediaPreviewVisible(false)}
-        onSend={handleSendStagedMedia}
-      />
+        {/* Media Preview Modal */}
+        <MediaPreviewModal
+          visible={media.mediaPreviewVisible}
+          assets={media.stagedMediaAssets}
+          isSending={media.isUploadingMedia}
+          onCancel={media.closeMediaPreview}
+          onSend={media.handleSendStagedMedia}
+        />
 
-      {/* Full-screen Media Viewer Modal */}
-      <MediaViewerModal
-        visible={mediaViewerVisible}
-        mediaUrl={mediaViewerUrl}
-        mediaKind={mediaViewerKind}
-        onClose={() => setMediaViewerVisible(false)}
-      />
+        {/* Full-screen Media Viewer Modal */}
+        <MediaViewerModal
+          visible={media.mediaViewerVisible}
+          mediaUrl={media.mediaViewerUrl}
+          mediaKind={media.mediaViewerKind}
+          onClose={media.closeMediaViewer}
+        />
 
-      {/* Property Catalog Modal */}
-      <PropertyCatalogModal
-        visible={catalogModalVisible}
-        onClose={() => setCatalogModalVisible(false)}
-        onSelectListing={handleSendCatalogListing}
-      />
+        {/* Property Catalog Modal */}
+        <PropertyCatalogModal
+          visible={modals.isCatalogVisible}
+          onClose={modals.closeModal}
+          onSelectListing={messages.handleSendCatalogListing}
+        />
 
-      {/* Inquiry Form Questionnaire Modal */}
-      <InquiryFormModal
-        visible={inquiryFormModalVisible}
-        onClose={() => setInquiryFormModalVisible(false)}
-        onSelectTemplate={handleSendInquiryTemplate}
-      />
+        {/* Inquiry Form Questionnaire Modal */}
+        <InquiryFormModal
+          visible={modals.isInquiryFormVisible}
+          onClose={modals.closeModal}
+          onSelectTemplate={messages.handleSendInquiryTemplate}
+        />
 
-      {/* 3D Virtual Tour & Video Embed Modal */}
-      <EmbedUrlModal
-        visible={embedModalVisible}
-        onClose={() => setEmbedModalVisible(false)}
-        onSubmit={handleSendEmbed}
-      />
+        {/* 3D Virtual Tour & Video Embed Modal */}
+        <EmbedUrlModal
+          visible={modals.isEmbedVisible}
+          onClose={modals.closeModal}
+          onSubmit={messages.handleSendEmbed}
+        />
 
-      {/* Report Modal */}
-      <ReportModal
-        visible={reportModalVisible}
-        targetName={conversation?.partnerName || 'User'}
-        onClose={() => setReportModalVisible(false)}
-        onSubmitReport={handleSubmitReport}
-      />
+        {/* Report Modal */}
+        <ReportModal
+          visible={modals.isReportVisible}
+          targetName={session.conversation?.partnerName || 'User'}
+          onClose={modals.closeModal}
+          onSubmitReport={session.handleSubmitReport}
+        />
 
-      {/* Deltan Intelligence / Ask AI Modal */}
-      <AskAIModal
-        visible={askAIModalVisible}
-        message={askAIMessage}
-        onClose={() => setAskAIModalVisible(false)}
-        onInsertToComposer={(text) => {
-          setComposerText((prev) => (prev ? `${prev}\n${text}` : text));
-        }}
-      />
+        {/* Deltan Intelligence / Ask AI Modal */}
+        <AskAIModal
+          visible={modals.isAskAIVisible}
+          message={modals.askAIMessage}
+          onClose={modals.closeModal}
+          onInsertToComposer={(text) => {
+            messages.setComposerText((prev) => (prev ? `${prev}\n${text}` : text));
+          }}
+        />
 
-      {/* Starred Messages Viewer Modal */}
-      <StarredMessagesModal
-        visible={starredModalVisible}
-        onClose={() => setStarredModalVisible(false)}
-        conversationId={conversationId}
-        conversationTitle={conversation?.title || conversation?.partnerName || 'Chat'}
-        onUnstarMessage={(msgId) => {
-          setStarredMsgIds((prev) => {
-            const next = new Set(prev);
-            next.delete(msgId);
-            return next;
-          });
-        }}
-        onJumpToMessage={(msgId, convId) => {
-          if (convId && convId !== conversationId) {
-            router.push(`/thread/${convId}`);
-          } else {
-            const targetIndex = messages.findIndex((m) => m.id === msgId);
-            if (targetIndex >= 0 && flatListRef.current) {
-              try {
-                flatListRef.current.scrollToIndex({
-                  index: targetIndex,
-                  animated: true,
-                });
-              } catch {
-                // If message is beyond rendered window
+        {/* Starred Messages Viewer Modal */}
+        <StarredMessagesModal
+          visible={modals.isStarredVisible}
+          onClose={modals.closeModal}
+          conversationId={conversationId}
+          conversationTitle={
+            session.conversation?.title || session.conversation?.partnerName || 'Chat'
+          }
+          onUnstarMessage={(msgId) => {
+            messages.handleToggleStar(msgId);
+          }}
+          onJumpToMessage={(msgId, convId) => {
+            if (convId && convId !== conversationId) {
+              router.push(`/thread/${convId}`);
+            } else {
+              const targetIndex = messages.messages.findIndex((m) => m.id === msgId);
+              if (targetIndex >= 0 && flatListRef.current) {
+                try {
+                  flatListRef.current.scrollToIndex({
+                    index: targetIndex,
+                    animated: true,
+                  });
+                } catch {
+                  // If message is beyond rendered window
+                }
               }
             }
+          }}
+        />
+
+        {/* Lead Management & Brokerage Routing Modal */}
+        <ManageAssignmentModal
+          visible={modals.isAssignmentVisible}
+          onClose={modals.closeModal}
+          conversationId={conversationId}
+          currentAssignedAgentId={
+            session.conversation?.assignment?.assignedAgentUserId ||
+            session.conversation?.assigned_to_user_id
           }
-        }}
-      />
+          onAssignmentComplete={() => {
+            session.fetchConversationDetails();
+            messages.fetchMessages();
+          }}
+        />
 
-      {/* Lead Management & Brokerage Routing Modal */}
-      <ManageAssignmentModal
-        visible={assignmentModalVisible}
-        onClose={() => setAssignmentModalVisible(false)}
-        conversationId={conversationId}
-        currentAssignedAgentId={(conversation as any)?.assigned_to_user_id}
-        onAssignmentComplete={(agentName, note) => {
-          fetchConversationDetails();
-          fetchMessages();
-        }}
-      />
+        {/* Confidential Lead Internal Notes Modal */}
+        <LeadInternalNotesModal
+          visible={modals.isInternalNotesVisible}
+          onClose={modals.closeModal}
+          conversationId={conversationId}
+          inquiryId={session.conversation?.assignment?.leadId}
+          title="Confidential Lead Notes"
+        />
 
-      {/* Confidential Lead Internal Notes Modal */}
-      <LeadInternalNotesModal
-        visible={internalNotesModalVisible}
-        onClose={() => setInternalNotesModalVisible(false)}
-        conversationId={conversationId}
-        title="Confidential Lead Notes"
-      />
+        {/* Quick Status Selection Modal */}
+        <Modal
+          visible={modals.isLeadStatusVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={modals.closeModal}
+        >
+          <Pressable style={styles.leadModalBackdrop} onPress={modals.closeModal}>
+            <View
+              style={[
+                styles.leadStatusCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Text style={[styles.leadModalTitle, { color: colors.text }]}>
+                Update Pipeline Stage
+              </Text>
+              <Text style={[styles.leadModalSubtitle, { color: colors.placeholder }]}>
+                Select the current sales progress stage for this inquiry
+              </Text>
+
+              {STATUS_PIPELINE.map((st) => {
+                const currentStatus = session.conversation?.assignment?.status;
+                const isCurrent =
+                  currentStatus === st.value ||
+                  (st.value === 'closed_won' && currentStatus === 'closed') ||
+                  (st.value === 'closed_lost' && currentStatus === 'lost');
+                return (
+                  <TouchableOpacity
+                    key={st.value}
+                    onPress={() => {
+                      session.handleUpdateLeadStatus(st.value);
+                      modals.closeModal();
+                    }}
+                    style={[
+                      styles.leadStatusOption,
+                      isCurrent && { backgroundColor: isDark ? '#262626' : '#f1f5f9' },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.leadStripStatusDot,
+                        {
+                          backgroundColor: st.color,
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                        },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.leadStatusOptionText,
+                        { color: colors.text, fontWeight: isCurrent ? '700' : '500' },
+                      ]}
+                    >
+                      {st.label}
+                    </Text>
+                    {isCurrent && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Modal>
       </View>
     </AnimatedPageWrapper>
   );
@@ -2084,5 +723,125 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#d97706',
     fontWeight: '500',
+  },
+  leadStripContainer: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  leadStripTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  leadStripStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  leadStripStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  leadStripStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  leadStripActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  leadStripPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  leadStripPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+    maxWidth: 140,
+  },
+  leadStripIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  leadStripShareBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 6,
+  },
+  leadStripShareText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+  },
+  leadStripHandoffBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 6,
+  },
+  leadStripHandoffText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: Typography.fontFamily,
+    flex: 1,
+  },
+  leadModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  leadStatusCard: {
+    width: '100%',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+  },
+  leadModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+  },
+  leadModalSubtitle: {
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 16,
+    fontFamily: Typography.fontFamily,
+  },
+  leadStatusOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginVertical: 3,
+  },
+  leadStatusOptionText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: Typography.fontFamily,
+    marginLeft: 8,
   },
 });

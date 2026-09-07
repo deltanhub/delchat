@@ -1,14 +1,27 @@
+import { AppState, type AppStateStatus } from 'react-native';
 import { supabase } from './supabase';
 import OfflineEngine, { OutboxItem } from './offline-engine';
 import { uploadLocalFileToSupabaseStorage } from './media-utils';
 import { dispatchPushNotification } from './push-notifications';
-import type { ChatMessage, ChatAttachmentItem } from '../components/chat/MessageBubble';
+import type { ChatMessage, ChatAttachmentItem } from '../components/chat/bubbles/types';
 
 export type SyncStatus = 'online' | 'offline' | 'syncing';
 
 let _syncStatus: SyncStatus = 'online';
 const _statusListeners = new Set<(status: SyncStatus) => void>();
 let _isDraining = false;
+let _appStateSubscribed = false;
+
+function ensureAppStateListener() {
+  if (_appStateSubscribed) return;
+  _appStateSubscribed = true;
+  AppState.addEventListener('change', (state: AppStateStatus) => {
+    if (state === 'active') {
+      void SyncCoordinator.checkConnectivity();
+      void supabase.rpc('touch_user_presence');
+    }
+  });
+}
 
 export const SyncCoordinator = {
   getStatus(): SyncStatus {
@@ -21,7 +34,31 @@ export const SyncCoordinator = {
     _statusListeners.forEach((fn) => fn(status));
   },
 
+  /**
+   * Proactively verify active internet connectivity against the API.
+   * Updates status to 'online' or 'offline' based on real network reachability.
+   */
+  async checkConnectivity(): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch('https://deltanhub.com', {
+        method: 'HEAD',
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      clearTimeout(timer);
+      const isOnline = res.status < 500;
+      this.setStatus(isOnline ? 'online' : 'offline');
+      return isOnline;
+    } catch {
+      this.setStatus('offline');
+      return false;
+    }
+  },
+
   subscribe(listener: (status: SyncStatus) => void): () => void {
+    ensureAppStateListener();
     _statusListeners.add(listener);
     listener(_syncStatus);
     return () => {
@@ -241,7 +278,7 @@ export const SyncCoordinator = {
             originalName: att.original_name || 'Attachment',
             mimeType: att.mime_type || 'application/octet-stream',
             sizeBytes: att.size_bytes || 0,
-            kind: (att.attachment_kind as any) || (att.mime_type?.startsWith('image/')
+            kind: (att.attachment_kind as ChatAttachmentItem['kind']) || (att.mime_type?.startsWith('image/')
               ? 'image'
               : att.mime_type?.startsWith('video/')
               ? 'video'
@@ -291,7 +328,7 @@ export const SyncCoordinator = {
           listingCard: rawPayload.listingCard || null,
           inquiryFormCard: rawPayload.inquiryFormCard || (msg.message_kind === 'inquiry_form' ? rawPayload : null),
           inquiryResponseCard: rawPayload.inquiryResponseCard || (msg.message_kind === 'inquiry_response' ? rawPayload : null),
-          reactions: (msg as any).reactions || rawPayload.reactions || {},
+          reactions: msg.reactions || rawPayload.reactions || {},
           structuredPayload: rawPayload,
         };
       });

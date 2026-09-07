@@ -22,14 +22,9 @@ import { Typography } from '../../constants/Typography';
 import { useColorScheme } from '../useColorScheme';
 import ScalePressable from '../ScalePressable';
 import * as Haptics from '../../lib/haptics';
+import { leadsRepository, InternalNoteItem } from '../../lib/repositories';
 
-export interface InternalNoteItem {
-  id: string;
-  authorUserId: string;
-  authorName: string;
-  body: string;
-  createdAt: string;
-}
+export type { InternalNoteItem };
 
 interface LeadInternalNotesModalProps {
   visible: boolean;
@@ -62,84 +57,15 @@ export default function LeadInternalNotesModal({
   const fetchNotes = useCallback(async () => {
     setLoading(true);
     try {
-      let activeInqId = inquiryId || resolvedInquiryId;
+      const result = await leadsRepository.fetchInternalNotes({
+        inquiryId: inquiryId || resolvedInquiryId,
+        conversationId,
+      });
 
-      // 1. If no inquiryId provided, attempt to resolve from conversation_id
-      if (!activeInqId && conversationId) {
-        const { data: inqRow } = await supabase
-          .from('crm_inquiries')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .maybeSingle();
-
-        if (inqRow) {
-          activeInqId = inqRow.id;
-          setResolvedInquiryId(inqRow.id);
-        }
+      if (result.inquiryId) {
+        setResolvedInquiryId(result.inquiryId);
       }
-
-      // 2. Primary: Query master_lead_internal_notes if inquiryId exists
-      if (activeInqId) {
-        const { data: noteRows, error: noteErr } = await supabase
-          .from('master_lead_internal_notes')
-          .select('id, author_user_id, body, created_at')
-          .eq('inquiry_id', activeInqId)
-          .order('created_at', { ascending: false });
-
-        if (!noteErr && noteRows && noteRows.length > 0) {
-          // Resolve author names
-          const authorIds = Array.from(new Set(noteRows.map((n: any) => n.author_user_id)));
-          const { data: profiles } = await supabase
-            .from('user_profiles')
-            .select('user_id, display_name, full_name')
-            .in('user_id', authorIds);
-
-          const nameMap = new Map(
-            (profiles || []).map((p: any) => [p.user_id, p.display_name || p.full_name || 'Agent'])
-          );
-
-          const mapped: InternalNoteItem[] = noteRows.map((n: any) => ({
-            id: n.id,
-            authorUserId: n.author_user_id,
-            authorName: nameMap.get(n.author_user_id) || 'Team Member',
-            body: n.body,
-            createdAt: n.created_at,
-          }));
-          setNotes(mapped);
-          return;
-        }
-      }
-
-      // 3. Fallback: Query chat_messages where intent = 'internal_note'
-      const { data: msgRows, error: msgErr } = await supabase
-        .from('chat_messages')
-        .select('id, sender_user_id, body, created_at')
-        .eq('conversation_id', conversationId)
-        .eq('intent', 'internal_note')
-        .order('created_at', { ascending: false });
-
-      if (!msgErr && msgRows) {
-        const authorIds = Array.from(new Set(msgRows.map((m: any) => m.sender_user_id).filter(Boolean)));
-        let nameMap = new Map<string, string>();
-        if (authorIds.length > 0) {
-          const { data: profiles } = await supabase
-            .from('user_profiles')
-            .select('user_id, display_name, full_name')
-            .in('user_id', authorIds);
-          (profiles || []).forEach((p: any) => {
-            nameMap.set(p.user_id, p.display_name || p.full_name || 'Agent');
-          });
-        }
-
-        const mapped: InternalNoteItem[] = msgRows.map((m: any) => ({
-          id: m.id,
-          authorUserId: m.sender_user_id,
-          authorName: nameMap.get(m.sender_user_id) || 'Team Member',
-          body: m.body,
-          createdAt: m.created_at,
-        }));
-        setNotes(mapped);
-      }
+      setNotes(result.notes);
     } catch (err) {
       console.warn('[LeadInternalNotesModal] Error fetching notes:', err);
     } finally {
@@ -180,16 +106,11 @@ export default function LeadInternalNotesModal({
       const activeInqId = inquiryId || resolvedInquiryId;
 
       if (activeInqId) {
-        const { error: insertErr } = await supabase.from('master_lead_internal_notes').insert({
-          inquiry_id: activeInqId,
-          author_user_id: currentUser.id,
+        await leadsRepository.addInternalNote({
+          inquiryId: activeInqId,
+          authorUserId: currentUser.id,
           body: text,
-          visibility: 'company_and_agent',
         });
-
-        if (insertErr) {
-          throw insertErr;
-        }
 
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         return;

@@ -1,18 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  FlatList,
-  ActivityIndicator,
-  RefreshControl,
-  Image,
-  Alert,
   TouchableOpacity,
-  Modal,
-  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,62 +16,23 @@ import { useColorScheme } from '../../components/useColorScheme';
 import ScalePressable from '../../components/ScalePressable';
 import AnimatedPageWrapper from '../../components/AnimatedPageWrapper';
 import * as Haptics from '../../lib/haptics';
-import { resolveAvatarUrl } from '../../lib/media-utils';
-import LeadInternalNotesModal from '../../components/chat/LeadInternalNotesModal';
+import { getCurrentProfile, isAgencyOrDeveloper, canReceiveLeads, AppProfile } from '../../lib/auth';
 
-export interface LeadItem {
-  id: string;
-  conversationId: string | null;
-  contactName: string;
-  contactEmail?: string | null;
-  contactPhone?: string | null;
-  budget?: string | null;
-  status: 'new' | 'assigned' | 'contacted' | 'qualified' | 'negotiating' | 'closed' | 'lost';
-  assignedAgent?: {
-    userId: string;
-    name: string;
-    avatarUrl: string | null;
-    role: string;
-  } | null;
-  createdAt: string;
-  listingTitle?: string | null;
-}
+// Leads Domain Sub-components and Hook
+import { MainTabType, ManualLeadItem } from '../../components/leads/types';
+import { useLeadsData } from '../../components/leads/useLeadsData';
+import ChatLeadsView from '../../components/leads/ChatLeadsView';
+import ManualLeadsView from '../../components/leads/ManualLeadsView';
+import AddManualLeadModal from '../../components/leads/AddManualLeadModal';
+import LeadDetailNotesModal from '../../components/leads/LeadDetailNotesModal';
 
-export interface TeamAgent {
-  userId: string;
-  name: string;
-  role: string;
-  avatarUrl: string | null;
-  email?: string;
-  phone?: string;
-}
+// Inquiries Domain Sub-components and Hook (Web Parity)
+import { useInquiriesData } from '../../components/inquiries/useInquiriesData';
+import { InquiryResponsesView } from '../../components/inquiries/InquiryResponsesView';
+import { InquiryFormBuilderView } from '../../components/inquiries/InquiryFormBuilderView';
+import type { InquiryMainTab } from '../../types/inquiries';
 
-export interface AssignmentHistoryItem {
-  id: string;
-  action_kind: string;
-  handoff_note: string | null;
-  created_at: string;
-  assigned_agent_user_id: string;
-  assigned_by_user_id: string;
-  agentName?: string;
-  assignedByName?: string;
-}
-
-const STATUS_PIPELINE: Array<{
-  value: LeadItem['status'];
-  label: string;
-  color: string;
-  bgLight: string;
-  bgDark: string;
-}> = [
-  { value: 'new', label: 'New', color: '#2563eb', bgLight: '#eff6ff', bgDark: '#1e293b' },
-  { value: 'assigned', label: 'Assigned', color: '#7c3aed', bgLight: '#f5f3ff', bgDark: '#2e1065' },
-  { value: 'contacted', label: 'Contacted', color: '#0891b2', bgLight: '#ecfeff', bgDark: '#164e63' },
-  { value: 'qualified', label: 'Qualified', color: '#059669', bgLight: '#ecfdf5', bgDark: '#064e3b' },
-  { value: 'negotiating', label: 'Negotiating', color: '#d97706', bgLight: '#fffbeb', bgDark: '#78350f' },
-  { value: 'closed', label: 'Closed / Won', color: '#16a34a', bgLight: '#f0fdf4', bgDark: '#14532d' },
-  { value: 'lost', label: 'Lost', color: '#dc2626', bgLight: '#fef2f2', bgDark: '#7f1d1d' },
-];
+export type CrmSection = 'leads' | 'inquiries';
 
 export default function LeadsScreen() {
   const router = useRouter();
@@ -88,285 +42,91 @@ export default function LeadsScreen() {
   const isDark = colorScheme === 'dark';
 
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [leads, setLeads] = useState<LeadItem[]>([]);
-  const [teamAgents, setTeamAgents] = useState<TeamAgent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [currentProfile, setCurrentProfile] = useState<AppProfile | null>(null);
 
-  // Lead Action Modals
-  const [selectedLead, setSelectedLead] = useState<LeadItem | null>(null);
-  const [assignModalVisible, setAssignModalVisible] = useState(false);
-  const [statusModalVisible, setStatusModalVisible] = useState(false);
-  const [historyModalVisible, setHistoryModalVisible] = useState(false);
-  const [notesModalVisible, setNotesModalVisible] = useState(false);
-  const [historyItems, setHistoryItems] = useState<AssignmentHistoryItem[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  // Top-level CRM section: 'leads' vs 'inquiries'
+  const [activeSection, setActiveSection] = useState<CrmSection>('leads');
 
+  // Leads sub-tabs: 'chat' vs 'manual'
+  const [activeLeadsTab, setActiveLeadsTab] = useState<MainTabType>('chat');
+
+  // Inquiries sub-tabs: 'responses' vs 'builder'
+  const [activeInquiriesTab, setActiveInquiriesTab] = useState<InquiryMainTab>('responses');
+
+  // Modals state for leads
+  const [addLeadModalVisible, setAddLeadModalVisible] = useState(false);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedManualLead, setSelectedManualLead] = useState<ManualLeadItem | null>(null);
+
+  // 1. Initialize user and profile with strict route guard
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) {
         router.replace('/auth');
         return;
       }
       setCurrentUser(user);
+      const prof = await getCurrentProfile();
+      if (prof) {
+        setCurrentProfile(prof);
+        if (!canReceiveLeads(prof.mainRole)) {
+          router.replace('/(tabs)');
+        }
+      }
     });
-  }, []);
+  }, [router]);
 
-  // Fetch live team agents
-  const fetchTeamAgents = useCallback(async () => {
-    if (!currentUser) return;
-    try {
-      const { data: agencyMembers } = await supabase
-        .from('agency_agent_memberships')
-        .select('agent_user_id')
-        .eq('agency_user_id', currentUser.id)
-        .eq('membership_status', 'active');
+  // 2. Domain hook for leads data, realtime subscriptions, and updates
+  const leadsData = useLeadsData(currentUser, currentProfile);
 
-      const { data: devMembers } = await supabase
-        .from('developer_agent_memberships')
-        .select('agent_user_id')
-        .eq('developer_user_id', currentUser.id)
-        .eq('membership_status', 'active');
+  // 3. Domain hook for inquiries data (web parity responses + form builder)
+  const inquiriesData = useInquiriesData();
 
-      const agentIds = Array.from(
-        new Set([
-          ...(agencyMembers?.map((m) => m.agent_user_id) || []),
-          ...(devMembers?.map((m) => m.agent_user_id) || []),
-        ])
-      );
+  // Strict Role Guard fallback UI
+  if (currentProfile && !canReceiveLeads(currentProfile.mainRole)) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <Ionicons name="shield-outline" size={48} color={colors.primary} style={{ marginBottom: 16 }} />
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, textAlign: 'center', marginBottom: 8, fontFamily: Typography.fontFamily }}>
+          Brokerage CRM Restricted
+        </Text>
+        <Text style={{ fontSize: 14, color: colors.placeholder, textAlign: 'center', marginBottom: 20, fontFamily: Typography.fontFamily }}>
+          The Leads CRM workspace is reserved for licensed real estate professionals and property hosts.
+        </Text>
+        <ScalePressable
+          onPress={() => router.replace('/(tabs)')}
+          style={{ backgroundColor: colors.primary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600', fontFamily: Typography.fontFamily }}>Return to Inbox</Text>
+        </ScalePressable>
+      </View>
+    );
+  }
 
-      if (agentIds.length > 0) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: agentIds,
-        });
-
-        const mapped: TeamAgent[] = (profiles || []).map((p: any) => ({
-          userId: p.user_id,
-          name: p.display_name?.trim() || p.full_name?.trim() || 'Agent',
-          role: p.role || 'Listing Agent',
-          avatarUrl: resolveAvatarUrl(p.avatar_url),
-          email: p.email,
-          phone: p.phone,
-        }));
-        setTeamAgents(mapped);
-      }
-    } catch (e) {
-      console.warn('Error fetching team agents:', e);
-    }
-  }, [currentUser]);
-
-  // Fetch live CRM inquiries
-  const fetchLeads = useCallback(async () => {
-    if (!currentUser) return;
-    setLoading(true);
-    try {
-      const { data: rawLeads, error } = await supabase
-        .from('crm_inquiries')
-        .select(`
-          id, conversation_id, buyer_user_id, assigned_agent_user_id,
-          lead_name, lead_email, lead_phone, budget_raw,
-          master_lead_status, created_at,
-          listing:listings (id, title)
-        `)
-        .or(`agency_user_id.eq.${currentUser.id},assigned_agent_user_id.eq.${currentUser.id},company_user_id.eq.${currentUser.id}`)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      // Resolve agent profiles for assigned leads
-      const assignedAgentIds = Array.from(
-        new Set((rawLeads || []).map((l) => l.assigned_agent_user_id).filter(Boolean))
-      );
-      const agentMap = new Map<string, any>();
-      if (assignedAgentIds.length > 0) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: assignedAgentIds,
-        });
-        profiles?.forEach((p: any) => {
-          agentMap.set(p.user_id, p);
-        });
-      }
-
-      const mapped: LeadItem[] = (rawLeads || []).map((l: any) => {
-        const agentProf = l.assigned_agent_user_id ? agentMap.get(l.assigned_agent_user_id) : null;
-        const listingObj = Array.isArray(l.listing) ? l.listing[0] : l.listing;
-
-        return {
-          id: l.id,
-          conversationId: l.conversation_id || null,
-          contactName: l.lead_name || 'Prospective Buyer',
-          contactEmail: l.lead_email,
-          contactPhone: l.lead_phone,
-          budget: l.budget_raw,
-          status: (l.master_lead_status as any) || 'new',
-          assignedAgent: agentProf
-            ? {
-                userId: agentProf.user_id,
-                name: agentProf.display_name?.trim() || agentProf.full_name?.trim() || 'Assigned Agent',
-                avatarUrl: resolveAvatarUrl(agentProf.avatar_url),
-                role: agentProf.role || 'Agent',
-              }
-            : null,
-          createdAt: l.created_at,
-          listingTitle: listingObj?.title || null,
-        };
-      });
-
-      setLeads(mapped);
-    } catch (e) {
-      console.warn('Error loading leads', e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (currentUser) {
-      fetchLeads();
-      fetchTeamAgents();
-    }
-  }, [currentUser, fetchLeads, fetchTeamAgents]);
-
-  const handleUpdateLeadStatus = async (leadId: string, newStatus: LeadItem['status']) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      setLeads((prev) =>
-        prev.map((l) => (l.id === leadId ? { ...l, status: newStatus } : l))
-      );
-      setStatusModalVisible(false);
-
-      await supabase
-        .from('crm_inquiries')
-        .update({
-          master_lead_status: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', leadId);
-    } catch (e: any) {
-      Alert.alert('Status Error', e.message);
-    }
-  };
-
-  const handleAssignAgentToLead = async (leadId: string, agent: TeamAgent) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === leadId
-            ? {
-                ...l,
-                status: 'assigned',
-                assignedAgent: {
-                  userId: agent.userId,
-                  name: agent.name,
-                  avatarUrl: agent.avatarUrl,
-                  role: agent.role,
-                },
-              }
-            : l
-        )
-      );
-      setAssignModalVisible(false);
-
-      await supabase
-        .from('crm_inquiries')
-        .update({
-          assigned_agent_user_id: agent.userId,
-          assigned_by_user_id: currentUser.id,
-          assigned_at: new Date().toISOString(),
-          master_lead_status: 'assigned',
-        })
-        .eq('id', leadId);
-
-      await supabase.from('crm_inquiry_assignment_history').insert({
-        inquiry_id: leadId,
-        agency_user_id: currentUser.id,
-        assigned_agent_user_id: agent.userId,
-        assigned_by_user_id: currentUser.id,
-        action_kind: 'assigned',
-        handoff_note: 'Assigned via DelChat Mobile CRM',
-      });
-
-      Alert.alert('Lead Assigned', `Lead successfully allocated to ${agent.name}.`);
-    } catch (e: any) {
-      Alert.alert('Assignment Error', e.message);
-    }
-  };
-
-  const handleOpenHistory = async (lead: LeadItem) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedLead(lead);
-    setHistoryModalVisible(true);
-    setLoadingHistory(true);
-    try {
-      const { data, error } = await supabase
-        .from('crm_inquiry_assignment_history')
-        .select('id, action_kind, handoff_note, created_at, assigned_agent_user_id, assigned_by_user_id')
-        .eq('inquiry_id', lead.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        const userIds = Array.from(
-          new Set(
-            data
-              .flatMap((d: any) => [d.assigned_agent_user_id, d.assigned_by_user_id])
-              .filter(Boolean)
-          )
-        );
-
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: userIds,
-        });
-
-        const profileMap = new Map<string, string>();
-        (profiles || []).forEach((p: any) => {
-          profileMap.set(p.user_id, p.display_name || p.full_name || 'Agent');
-        });
-
-        const mapped: AssignmentHistoryItem[] = data.map((d: any) => ({
-          id: d.id,
-          action_kind: d.action_kind,
-          handoff_note: d.handoff_note,
-          created_at: d.created_at,
-          assigned_agent_user_id: d.assigned_agent_user_id,
-          assigned_by_user_id: d.assigned_by_user_id,
-          agentName: profileMap.get(d.assigned_agent_user_id) || 'Assigned Agent',
-          assignedByName: profileMap.get(d.assigned_by_user_id) || 'Manager',
-        }));
-        setHistoryItems(mapped);
-      } else {
-        setHistoryItems([]);
-      }
-    } catch (e) {
-      console.warn('Failed to load history', e);
-      setHistoryItems([]);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
-
-  const filteredLeads = leads.filter((l) => {
-    if (filterStatus === 'all') return true;
-    return l.status === filterStatus;
-  });
+  const isAgencyOrDev = isAgencyOrDeveloper(currentProfile?.mainRole);
+  const totalLeadsCount = leadsData.chatLeads.length + leadsData.manualLeads.length;
 
   return (
     <AnimatedPageWrapper>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <StatusBar style={isDark ? 'light' : 'dark'} translucent backgroundColor="transparent" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
-        {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: colors.border }]}>
+        {/* Top Header */}
+        <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
           <View style={styles.headerTop}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>CRM Leads</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>CRM</Text>
+              <Text style={[styles.headerSubtitle, { color: colors.placeholder }]}>
+                Leads pipeline & chat inquiry questionnaires
+              </Text>
+            </View>
+
             <TouchableOpacity
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                fetchLeads();
+                leadsData.fetchAllLeads();
+                inquiriesData.onRefresh();
               }}
               style={[styles.refreshBtn, { backgroundColor: isDark ? '#262626' : colors.primarySoft }]}
             >
@@ -374,441 +134,270 @@ export default function LeadsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Pipeline Filter Bar */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScroll}
-          >
+          {/* Top-Level CRM Section Switcher: Leads vs Inquiries */}
+          <View style={[styles.topSectionSwitcher, { backgroundColor: isDark ? '#18181b' : '#f4f4f5' }]}>
             <TouchableOpacity
-              onPress={() => setFilterStatus('all')}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setActiveSection('leads');
+              }}
               style={[
-                styles.filterChip,
-                filterStatus === 'all' && { backgroundColor: colors.primary },
+                styles.topSectionBtn,
+                activeSection === 'leads' && [styles.topSectionBtnActive, { backgroundColor: colors.primary }],
               ]}
             >
+              <Ionicons
+                name="people"
+                size={14}
+                color={activeSection === 'leads' ? '#ffffff' : colors.placeholder}
+              />
               <Text
                 style={[
-                  styles.filterChipText,
-                  { color: filterStatus === 'all' ? '#ffffff' : colors.placeholder },
+                  styles.topSectionBtnText,
+                  { color: activeSection === 'leads' ? '#ffffff' : colors.text },
                 ]}
               >
-                All ({leads.length})
+                Leads
               </Text>
-            </TouchableOpacity>
-            {STATUS_PIPELINE.map((st) => {
-              const count = leads.filter((l) => l.status === st.value).length;
-              const isActive = filterStatus === st.value;
-              return (
-                <TouchableOpacity
-                  key={st.value}
-                  onPress={() => setFilterStatus(st.value)}
+              <View
+                style={[
+                  styles.countBadge,
+                  {
+                    backgroundColor: activeSection === 'leads'
+                      ? 'rgba(255, 255, 255, 0.25)'
+                      : isDark ? '#27272a' : '#e4e4e7',
+                  },
+                ]}
+              >
+                <Text
                   style={[
-                    styles.filterChip,
-                    isActive && { backgroundColor: st.color },
+                    styles.countBadgeText,
+                    { color: activeSection === 'leads' ? '#ffffff' : colors.primary },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      { color: isActive ? '#ffffff' : colors.placeholder },
-                    ]}
-                  >
-                    {st.label} ({count})
+                  {totalLeadsCount}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setActiveSection('inquiries');
+              }}
+              style={[
+                styles.topSectionBtn,
+                activeSection === 'inquiries' && [styles.topSectionBtnActive, { backgroundColor: colors.primary }],
+              ]}
+            >
+              <Ionicons
+                name="help-circle-outline"
+                size={15}
+                color={activeSection === 'inquiries' ? '#ffffff' : colors.placeholder}
+              />
+              <Text
+                style={[
+                  styles.topSectionBtnText,
+                  { color: activeSection === 'inquiries' ? '#ffffff' : colors.text },
+                ]}
+              >
+                Inquiries
+              </Text>
+              <View
+                style={[
+                  styles.countBadge,
+                  {
+                    backgroundColor: activeSection === 'inquiries'
+                      ? 'rgba(255, 255, 255, 0.25)'
+                      : isDark ? '#27272a' : '#e4e4e7',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.countBadgeText,
+                    { color: activeSection === 'inquiries' ? '#ffffff' : colors.primary },
+                  ]}
+                >
+                  {inquiriesData.responses.length}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Sub-level Navigation: Leads (Chat vs Manual) OR Inquiries (Responses vs Builder) */}
+          {activeSection === 'leads' ? (
+            <View style={[styles.mainTabsContainer, { backgroundColor: isDark ? '#1a060d' : '#fcedf2', borderColor: isDark ? '#4a0f1f' : '#f5dbe3' }]}>
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveLeadsTab('chat');
+                }}
+                style={[styles.mainTabBtn, activeLeadsTab === 'chat' && { backgroundColor: colors.primary }]}
+              >
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={13}
+                  color={activeLeadsTab === 'chat' ? '#ffffff' : colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.mainTabBtnText, { color: activeLeadsTab === 'chat' ? '#ffffff' : colors.text }]}>
+                  Leads from chat
+                </Text>
+                <View style={[styles.countBadge, { backgroundColor: activeLeadsTab === 'chat' ? 'rgba(255,255,255,0.25)' : colors.primarySoft }]}>
+                  <Text style={[styles.countBadgeText, { color: activeLeadsTab === 'chat' ? '#ffffff' : colors.primary }]}>
+                    {leadsData.chatLeads.length}
                   </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveLeadsTab('manual');
+                }}
+                style={[styles.mainTabBtn, activeLeadsTab === 'manual' && { backgroundColor: colors.primary }]}
+              >
+                <Ionicons
+                  name="people-outline"
+                  size={13}
+                  color={activeLeadsTab === 'manual' ? '#ffffff' : colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.mainTabBtnText, { color: activeLeadsTab === 'manual' ? '#ffffff' : colors.text }]}>
+                  My leads
+                </Text>
+                <View style={[styles.countBadge, { backgroundColor: activeLeadsTab === 'manual' ? 'rgba(255,255,255,0.25)' : colors.primarySoft }]}>
+                  <Text style={[styles.countBadgeText, { color: activeLeadsTab === 'manual' ? '#ffffff' : colors.primary }]}>
+                    {leadsData.manualLeads.length}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={[styles.mainTabsContainer, { backgroundColor: isDark ? '#1a060d' : '#fcedf2', borderColor: isDark ? '#4a0f1f' : '#f5dbe3' }]}>
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveInquiriesTab('responses');
+                }}
+                style={[styles.mainTabBtn, activeInquiriesTab === 'responses' && { backgroundColor: colors.primary }]}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={13}
+                  color={activeInquiriesTab === 'responses' ? '#ffffff' : colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.mainTabBtnText, { color: activeInquiriesTab === 'responses' ? '#ffffff' : colors.text }]}>
+                  Responses
+                </Text>
+                <View style={[styles.countBadge, { backgroundColor: activeInquiriesTab === 'responses' ? 'rgba(255,255,255,0.25)' : colors.primarySoft }]}>
+                  <Text style={[styles.countBadgeText, { color: activeInquiriesTab === 'responses' ? '#ffffff' : colors.primary }]}>
+                    {inquiriesData.responses.length}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveInquiriesTab('builder');
+                }}
+                style={[styles.mainTabBtn, activeInquiriesTab === 'builder' && { backgroundColor: colors.primary }]}
+              >
+                <Ionicons
+                  name="construct-outline"
+                  size={13}
+                  color={activeInquiriesTab === 'builder' ? '#ffffff' : colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.mainTabBtnText, { color: activeInquiriesTab === 'builder' ? '#ffffff' : colors.text }]}>
+                  Form Builder
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
-        {/* Leads Feed */}
-        {loading && leads.length === 0 ? (
-          <View style={styles.centerContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
-        ) : filteredLeads.length === 0 ? (
-          <View style={styles.centerContainer}>
-            <Ionicons name="folder-open-outline" size={54} color={colors.placeholder} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Leads Found</Text>
-            <Text style={[styles.emptySubtitle, { color: colors.placeholder }]}>
-              {filterStatus === 'all'
-                ? 'No client inquiries or leads recorded in your CRM pipeline yet.'
-                : `No leads currently in the "${filterStatus}" stage.`}
-            </Text>
-          </View>
+        {/* Body Content */}
+        {activeSection === 'leads' ? (
+          activeLeadsTab === 'chat' ? (
+            <ChatLeadsView
+              chatLeads={leadsData.chatLeads}
+              loading={leadsData.loading}
+              refreshing={leadsData.refreshing}
+              isAgencyOrDev={isAgencyOrDev}
+              currentUser={currentUser ? { id: currentUser.id } : null}
+              savingChatLeadId={leadsData.savingChatLeadId}
+              onRefresh={leadsData.fetchAllLeads}
+              onUpdateChatLeadStatus={leadsData.updateChatLeadStatus}
+              onOpenConversation={(convId) => router.push(`/thread/${convId}` as Href)}
+            />
+          ) : (
+            <ManualLeadsView
+              manualLeads={leadsData.manualLeads}
+              manualCounts={leadsData.manualCounts}
+              loading={leadsData.loading}
+              refreshing={leadsData.refreshing}
+              onRefresh={leadsData.fetchAllLeads}
+              onOpenAddLead={() => setAddLeadModalVisible(true)}
+              onSelectLead={(lead) => {
+                setSelectedManualLead(lead);
+                setDetailModalVisible(true);
+              }}
+            />
+          )
+        ) : activeInquiriesTab === 'responses' ? (
+          <InquiryResponsesView
+            responses={inquiriesData.filteredResponses}
+            totalCount={inquiriesData.responses.length}
+            tourCount={inquiriesData.responses.filter((r) => r.intentTrigger === 'tour').length}
+            questionCount={inquiriesData.responses.filter((r) => r.intentTrigger === 'question').length}
+            activeFilter={inquiriesData.responseFilter}
+            onSelectFilter={inquiriesData.setResponseFilter}
+            onOpenChat={(convId) => router.push(`/thread/${convId}` as Href)}
+          />
         ) : (
-          <FlatList
-            data={filteredLeads}
-            keyExtractor={(item) => item.id}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => {
-                  setRefreshing(true);
-                  fetchLeads();
-                }}
-                tintColor={colors.primary}
-              />
-            }
-            renderItem={({ item }) => {
-              const statusMeta = STATUS_PIPELINE.find((s) => s.value === item.status) || STATUS_PIPELINE[0];
-              return (
-                <ScalePressable
-                  onPress={() => {
-                    if (item.conversationId) {
-                      router.push({
-                        pathname: '/thread/[id]',
-                        params: {
-                          id: item.conversationId,
-                          partnerName: item.contactName,
-                        },
-                      });
-                    }
-                  }}
-                  style={[
-                    styles.leadCard,
-                    {
-                      backgroundColor: colors.card,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                >
-                  {/* Top: Name & Pipeline Status */}
-                  <View style={styles.cardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.leadName, { color: colors.text }]} numberOfLines={1}>
-                        {item.contactName}
-                      </Text>
-                      {item.listingTitle && (
-                        <Text style={[styles.listingTitle, { color: colors.placeholder }]} numberOfLines={1}>
-                          {item.listingTitle}
-                        </Text>
-                      )}
-                    </View>
-
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSelectedLead(item);
-                        setStatusModalVisible(true);
-                      }}
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: isDark ? statusMeta.bgDark : statusMeta.bgLight },
-                      ]}
-                    >
-                      <View style={[styles.statusDot, { backgroundColor: statusMeta.color }]} />
-                      <Text style={[styles.statusBadgeText, { color: statusMeta.color }]}>
-                        {statusMeta.label}
-                      </Text>
-                      <Ionicons name="chevron-down" size={12} color={statusMeta.color} style={{ marginLeft: 2 }} />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Contact info & Budget */}
-                  <View style={styles.metaRow}>
-                    {item.contactPhone && (
-                      <View style={styles.metaPill}>
-                        <Ionicons name="call-outline" size={13} color={colors.placeholder} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metaPillText, { color: colors.text }]}>{item.contactPhone}</Text>
-                      </View>
-                    )}
-                    {item.budget && (
-                      <View style={styles.metaPill}>
-                        <Ionicons name="cash-outline" size={13} color={colors.primary} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metaPillText, { color: colors.primary, fontWeight: '600' }]}>
-                          {item.budget}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Footer: Assigned Agent & Action buttons */}
-                  <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
-                    <View style={styles.agentSection}>
-                      {item.assignedAgent ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          {item.assignedAgent.avatarUrl ? (
-                            <Image source={{ uri: item.assignedAgent.avatarUrl }} style={styles.agentAvatar} />
-                          ) : (
-                            <View style={[styles.agentAvatarFallback, { backgroundColor: colors.primarySoft }]}>
-                              <Ionicons name="person" size={12} color={colors.primary} />
-                            </View>
-                          )}
-                          <View style={{ marginLeft: 8 }}>
-                            <Text style={[styles.agentLabel, { color: colors.placeholder }]}>Assigned to</Text>
-                            <Text style={[styles.agentName, { color: colors.text }]}>{item.assignedAgent.name}</Text>
-                          </View>
-                        </View>
-                      ) : (
-                        <Text style={[styles.unassignedText, { color: colors.placeholder }]}>Unassigned</Text>
-                      )}
-                    </View>
-
-                    <View style={styles.actionBtns}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setSelectedLead(item);
-                          setNotesModalVisible(true);
-                        }}
-                        style={[styles.smallBtn, { backgroundColor: isDark ? '#262626' : colors.primarySoft }]}
-                      >
-                        <Ionicons name="document-text-outline" size={15} color={colors.primary} />
-                        <Text style={[styles.smallBtnText, { color: colors.primary }]}>Notes</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => handleOpenHistory(item)}
-                        style={[styles.smallBtn, { backgroundColor: isDark ? '#262626' : '#f1f5f9' }]}
-                      >
-                        <Ionicons name="time-outline" size={15} color={colors.text} />
-                        <Text style={[styles.smallBtnText, { color: colors.text }]}>History</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => {
-                          setSelectedLead(item);
-                          setAssignModalVisible(true);
-                        }}
-                        style={[styles.smallBtn, { backgroundColor: isDark ? '#262626' : colors.primarySoft }]}
-                      >
-                        <Ionicons name="person-add-outline" size={15} color={colors.primary} />
-                        <Text style={[styles.smallBtnText, { color: colors.primary }]}>
-                          {item.assignedAgent ? 'Reassign' : 'Assign'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      {item.conversationId && (
-                        <TouchableOpacity
-                          onPress={() => {
-                            router.push({
-                              pathname: '/thread/[id]',
-                              params: {
-                                id: item.conversationId!,
-                                partnerName: item.contactName,
-                              },
-                            });
-                          }}
-                          style={[styles.smallBtn, { backgroundColor: colors.primary }]}
-                        >
-                          <Ionicons name="chatbubble-ellipses-outline" size={15} color="#ffffff" />
-                          <Text style={[styles.smallBtnText, { color: '#ffffff' }]}>Chat</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                </ScalePressable>
-              );
-            }}
-            contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 20 }}
+          <InquiryFormBuilderView
+            template={inquiriesData.currentTemplate}
+            selectedTrigger={inquiriesData.selectedTrigger}
+            onSelectTrigger={inquiriesData.setSelectedTrigger}
+            onToggleActive={() => inquiriesData.toggleActive(inquiriesData.selectedTrigger)}
+            onSaveMeta={(title, desc) => inquiriesData.saveTemplateMeta(inquiriesData.selectedTrigger, title, desc)}
+            onAddField={(field) => inquiriesData.addField(inquiriesData.selectedTrigger, field)}
+            onUpdateField={(fId, patch) => inquiriesData.updateField(inquiriesData.selectedTrigger, fId, patch)}
+            onDeleteField={(fId) => inquiriesData.deleteField(inquiriesData.selectedTrigger, fId)}
+            onReorderField={(fId, dir) => inquiriesData.reorderField(inquiriesData.selectedTrigger, fId, dir)}
           />
         )}
 
-        {/* Status Transition Modal */}
-        <Modal
-          visible={statusModalVisible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => setStatusModalVisible(false)}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => setStatusModalVisible(false)}
-            style={styles.modalBackdrop}
-          >
-            <View style={[styles.statusModalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Update Pipeline Status</Text>
-              <Text style={[styles.modalSubtitle, { color: colors.placeholder }]}>
-                Select current stage for {selectedLead?.contactName}
-              </Text>
+        {/* Lead Modals */}
+        <AddManualLeadModal
+          visible={addLeadModalVisible}
+          isSubmitting={leadsData.isSubmittingForm}
+          onClose={() => setAddLeadModalVisible(false)}
+          onSubmit={leadsData.createManualLead}
+        />
 
-              {STATUS_PIPELINE.map((s) => {
-                const isCurrent = selectedLead?.status === s.value;
-                return (
-                  <TouchableOpacity
-                    key={s.value}
-                    onPress={() => {
-                      if (selectedLead) handleUpdateLeadStatus(selectedLead.id, s.value);
-                    }}
-                    style={[
-                      styles.statusOption,
-                      isCurrent && { backgroundColor: isDark ? '#262626' : colors.primarySoft },
-                    ]}
-                  >
-                    <View style={[styles.statusDot, { backgroundColor: s.color }]} />
-                    <Text
-                      style={[
-                        styles.statusOptionText,
-                        { color: colors.text },
-                        isCurrent && { fontWeight: '700', color: colors.primary },
-                      ]}
-                    >
-                      {s.label}
-                    </Text>
-                    {isCurrent && <Ionicons name="checkmark" size={18} color={colors.primary} />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </TouchableOpacity>
-        </Modal>
-
-        {/* Agent Assignment Modal */}
-        <Modal
-          visible={assignModalVisible}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setAssignModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View
-              style={[
-                styles.assignModalCard,
-                { backgroundColor: colors.card, borderTopColor: colors.border },
-              ]}
-            >
-              <View style={styles.assignHeader}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Assign to Team Agent</Text>
-                <TouchableOpacity onPress={() => setAssignModalVisible(false)}>
-                  <Ionicons name="close" size={24} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-
-              {teamAgents.length === 0 ? (
-                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <Text style={{ color: colors.placeholder, textAlign: 'center' }}>
-                    No team members found in your agency roster.
-                  </Text>
-                </View>
-              ) : (
-                <ScrollView style={{ maxHeight: 340 }}>
-                  {teamAgents.map((agent) => (
-                    <TouchableOpacity
-                      key={agent.userId}
-                      onPress={() => {
-                        if (selectedLead) handleAssignAgentToLead(selectedLead.id, agent);
-                      }}
-                      style={[styles.agentRow, { borderBottomColor: colors.border }]}
-                    >
-                      {agent.avatarUrl ? (
-                        <Image source={{ uri: agent.avatarUrl }} style={styles.agentRowAvatar} />
-                      ) : (
-                        <View style={[styles.agentRowAvatarFallback, { backgroundColor: colors.primarySoft }]}>
-                          <Ionicons name="person" size={16} color={colors.primary} />
-                        </View>
-                      )}
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={[styles.agentRowName, { color: colors.text }]}>{agent.name}</Text>
-                        <Text style={[styles.agentRowRole, { color: colors.placeholder }]}>{agent.role}</Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={18} color={colors.placeholder} />
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-          </View>
-        </Modal>
-
-        {/* Assignment History Modal */}
-        <Modal
-          visible={historyModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setHistoryModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View
-              style={[
-                styles.assignModalCard,
-                {
-                  backgroundColor: colors.card,
-                  borderTopColor: colors.border,
-                  maxHeight: '75%',
-                },
-              ]}
-            >
-              <View style={styles.assignHeader}>
-                <View>
-                  <Text style={[styles.modalTitle, { color: colors.text }]}>Assignment History</Text>
-                  <Text style={[styles.modalSubtitle, { color: colors.placeholder }]}>
-                    {selectedLead?.contactName || 'Lead'} Handoff Audit Trail
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setHistoryModalVisible(false)}>
-                  <Ionicons name="close" size={24} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-
-              {loadingHistory ? (
-                <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                </View>
-              ) : historyItems.length === 0 ? (
-                <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                  <Ionicons name="time-outline" size={36} color={colors.placeholder} />
-                  <Text style={{ fontSize: 13, color: colors.placeholder, marginTop: 8 }}>
-                    No assignment transfers recorded yet.
-                  </Text>
-                </View>
-              ) : (
-                <ScrollView style={{ maxHeight: 380 }} contentContainerStyle={{ padding: 12 }}>
-                  {historyItems.map((item, idx) => (
-                    <View
-                      key={item.id || idx}
-                      style={{
-                        flexDirection: 'row',
-                        paddingVertical: 10,
-                        borderBottomWidth: idx < historyItems.length - 1 ? StyleSheet.hairlineWidth : 0,
-                        borderBottomColor: colors.border,
-                      }}
-                    >
-                      <View
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 14,
-                          backgroundColor: isDark ? '#3d1624' : '#fcedf2',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          marginRight: 10,
-                        }}
-                      >
-                        <Ionicons name="git-commit-outline" size={16} color={colors.primary} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
-                            {item.action_kind === 'assigned' ? 'Assigned to ' + item.agentName : item.action_kind}
-                          </Text>
-                          <Text style={{ fontSize: 11, color: colors.placeholder }}>
-                            {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          </Text>
-                        </View>
-                        <Text style={{ fontSize: 11, color: colors.placeholder, marginTop: 2 }}>
-                          By: {item.assignedByName}
-                        </Text>
-                        {item.handoff_note && (
-                          <Text style={{ fontSize: 12, color: colors.text, marginTop: 4, fontStyle: 'italic' }}>
-                            "{item.handoff_note}"
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-          </View>
-        </Modal>
-
-        {/* Lead Internal Team Notes Modal */}
-        <LeadInternalNotesModal
-          visible={notesModalVisible}
-          onClose={() => setNotesModalVisible(false)}
-          conversationId={selectedLead?.conversationId || ''}
-          inquiryId={selectedLead?.id}
-          title={`Team Notes: ${selectedLead?.contactName || 'Lead'}`}
+        <LeadDetailNotesModal
+          visible={detailModalVisible}
+          lead={selectedManualLead}
+          isSavingNotes={leadsData.isSavingNotes}
+          onClose={() => {
+            setDetailModalVisible(false);
+            setSelectedManualLead(null);
+          }}
+          onSaveNotes={async (notes) => {
+            if (selectedManualLead) {
+              await leadsData.saveManualLeadNotes(selectedManualLead.id, notes);
+            }
+          }}
+          onUpdateStatus={(nextStatus) => {
+            if (selectedManualLead) {
+              leadsData.updateManualLeadStatus(selectedManualLead.id, nextStatus);
+            }
+          }}
         />
       </View>
     </AnimatedPageWrapper>
@@ -831,10 +420,15 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   headerTitle: {
-    fontSize: Typography.sizes.xl,
+    fontSize: 24,
     fontWeight: '800',
-    fontFamily: Typography.fontFamily,
     letterSpacing: -0.5,
+    fontFamily: Typography.fontFamily,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    fontFamily: Typography.fontFamily,
   },
   refreshBtn: {
     width: 36,
@@ -843,231 +437,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  filterScroll: {
+  topSectionSwitcher: {
     flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 4,
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 10,
+    gap: 4,
   },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(128,128,128,0.12)',
-  },
-  filterChipText: {
-    fontSize: Typography.sizes.xs,
-    fontFamily: Typography.fontFamily,
-    fontWeight: '600',
-  },
-  centerContainer: {
+  topSectionBtn: {
     flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
+    paddingVertical: 7,
+    borderRadius: 9,
+    gap: 6,
   },
-  emptyTitle: {
-    fontSize: Typography.sizes.md,
+  topSectionBtnActive: {
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  topSectionBtnText: {
+    fontSize: 13,
     fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-    marginTop: 14,
   },
-  emptySubtitle: {
-    fontSize: Typography.sizes.sm,
-    fontFamily: Typography.fontFamily,
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 20,
-  },
-  leadCard: {
-    borderRadius: 14,
+  mainTabsContainer: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    padding: 3,
     borderWidth: 1,
-    padding: 14,
-    marginBottom: 12,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  leadName: {
-    fontSize: 16,
-    fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-  },
-  listingTitle: {
-    fontSize: 12,
-    marginTop: 2,
-    fontFamily: Typography.fontFamily,
-  },
-  statusBadge: {
+  mainTabBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginVertical: 10,
-    flexWrap: 'wrap',
-  },
-  metaPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(128,128,128,0.08)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    justifyContent: 'center',
+    paddingVertical: 6,
     borderRadius: 8,
   },
-  metaPillText: {
+  mainTabBtnText: {
     fontSize: 12,
-    fontFamily: Typography.fontFamily,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 10,
-    borderTopWidth: 1,
-  },
-  agentSection: {
-    flex: 1,
-  },
-  agentAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
-  agentAvatarFallback: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  agentLabel: {
-    fontSize: 10,
-    fontFamily: Typography.fontFamily,
-  },
-  agentName: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-  },
-  unassignedText: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    fontFamily: Typography.fontFamily,
-  },
-  actionBtns: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  smallBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  smallBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  statusModalCard: {
-    width: '100%',
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 20,
-  },
-  modalTitle: {
-    fontSize: 17,
     fontWeight: '700',
     fontFamily: Typography.fontFamily,
   },
-  modalSubtitle: {
-    fontSize: 13,
-    marginTop: 4,
-    marginBottom: 16,
-    fontFamily: Typography.fontFamily,
-  },
-  statusOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+  countBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
     borderRadius: 10,
-    marginVertical: 3,
+    marginLeft: 6,
   },
-  statusOptionText: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: Typography.fontFamily,
-    marginLeft: 8,
-  },
-  assignModalCard: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    padding: 20,
-  },
-  assignHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  agentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  agentRowAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
-  agentRowAvatarFallback: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  agentRowName: {
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-  },
-  agentRowRole: {
-    fontSize: 12,
-    marginTop: 2,
+  countBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
     fontFamily: Typography.fontFamily,
   },
 });

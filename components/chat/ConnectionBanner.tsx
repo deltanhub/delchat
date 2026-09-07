@@ -70,10 +70,10 @@ export default function ConnectionBanner({ statusOverride }: ConnectionBannerPro
     : 'checkmark-circle-outline';
 
   const label = isOffline
-    ? 'Offline — Messages saved locally & queued'
+    ? 'Offline'
     : isSyncing
-    ? 'Syncing offline messages & updates...'
-    : 'Connected — All messages up to date';
+    ? 'Syncing...'
+    : 'Back online';
 
   return (
     <Animated.View
@@ -89,9 +89,9 @@ export default function ConnectionBanner({ statusOverride }: ConnectionBannerPro
     >
       <View style={styles.content}>
         {isSyncing ? (
-          <ActivityIndicator size="small" color={textColor} style={{ marginRight: 8 }} />
+          <ActivityIndicator size="small" color={textColor} style={{ marginRight: 6 }} />
         ) : (
-          <Ionicons name={iconName} size={16} color={textColor} style={{ marginRight: 8 }} />
+          <Ionicons name={iconName} size={15} color={textColor} style={{ marginRight: 6 }} />
         )}
         <Text style={[styles.text, { color: textColor }]}>
           {label}
@@ -103,7 +103,7 @@ export default function ConnectionBanner({ statusOverride }: ConnectionBannerPro
 
 const styles = StyleSheet.create({
   banner: {
-    paddingVertical: 6,
+    paddingVertical: 5,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     flexDirection: 'row',

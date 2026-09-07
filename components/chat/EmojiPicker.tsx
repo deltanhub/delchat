@@ -9,8 +9,8 @@ import {
   Dimensions,
   Platform,
   Image,
-  useColorScheme as RNUseColorScheme
 } from 'react-native';
+import { useColorScheme } from '../useColorScheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '../../constants/Colors';
@@ -37,7 +37,7 @@ export const getCountryCodeFromFlag = (flagEmoji: string): string | null => {
 };
 
 export default function EmojiPicker({ onSelectEmoji, onClose }: EmojiPickerProps) {
-  const systemScheme = RNUseColorScheme() ?? 'light';
+  const systemScheme = useColorScheme();
   const colors = Colors[systemScheme];
 
   const [searchText, setSearchText] = useState('');

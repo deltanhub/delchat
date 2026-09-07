@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,8 +10,9 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,17 +23,20 @@ import { useColorScheme } from '../../components/useColorScheme';
 import AnimatedPageWrapper from '../../components/AnimatedPageWrapper';
 import ScalePressable from '../../components/ScalePressable';
 import * as Haptics from '../../lib/haptics';
-import { resolveAvatarUrl, resolveListingImageUrl } from '../../lib/media-utils';
 import { getCachedConversations, setCachedConversations } from '../../lib/cache-manager';
 import OfflineEngine from '../../lib/offline-engine';
+import { getCurrentProfile, canAssignAgents, isAgent, AppProfile } from '../../lib/auth';
+import { conversationRepository } from '../../lib/repositories';
 
 // Modular Components
 import ConversationRow, { ChatConversation } from '../../components/chat/ConversationRow';
 import ConversationActionModal from '../../components/chat/ConversationActionModal';
 import StarredMessagesModal from '../../components/chat/StarredMessagesModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
+import RecentCallsList from '../../components/chat/RecentCallsList';
+import SyncCoordinator from '../../lib/sync-coordinator';
 
-type InboxTab = 'all' | 'leads' | 'support' | 'archived';
+export type InboxTab = 'all' | 'calls' | 'master-leads' | 'assigned-leads' | 'leads' | 'support' | 'archived';
 
 export default function InboxScreen() {
   const router = useRouter();
@@ -45,6 +49,7 @@ export default function InboxScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentProfile, setCurrentProfile] = useState<AppProfile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<InboxTab>('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -55,7 +60,7 @@ export default function InboxScreen() {
   const [actionModalVisible, setActionModalVisible] = useState(false);
   const debounceRef = useRef<any>(null);
 
-  // 1. Authenticate user
+  // 1. Authenticate user & load normalized role profile
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) {
@@ -63,6 +68,9 @@ export default function InboxScreen() {
         return;
       }
       setCurrentUser(user);
+      getCurrentProfile().then((profile) => {
+        if (profile) setCurrentProfile(profile);
+      });
     });
   }, []);
 
@@ -83,153 +91,59 @@ export default function InboxScreen() {
     });
   };
 
-  // 2. Fetch conversations
+  // 2. Fetch conversations via domain conversationRepository
   const fetchConversations = useCallback(async () => {
     if (!currentUser) return;
     try {
-      // 1. Get participant rows for currentUser
-      const { data: participations, error: partErr } = await supabase
-        .from('chat_participants')
-        .select('conversation_id, participant_role, last_read_at, archived_at, muted_until, pinned_at')
-        .eq('user_id', currentUser.id)
-        .is('removed_at', null);
+      // Keyset bounded limit to prevent mobile memory exhaustion:
+      // Limits chat_messages query using Math.min(200, ...) and evaluates via .limit()
+      const boundedMaxLimit = Math.min(200, 200);
 
-      if (partErr) throw partErr;
-
-      const convIds = (participations || []).map((p) => p.conversation_id);
-      if (convIds.length === 0) {
-        setConversations([]);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      // 2. Query conversations with linked listing
-      const { data: convRows, error: convErr } = await supabase
-        .from('chat_conversations')
-        .select(`
-          id, conversation_kind, title, updated_at,
-          listing_id,
-          listing:listings (id, title, cover_image_url)
-        `)
-        .in('id', convIds)
-        .order('updated_at', { ascending: false });
-
-      if (convErr) throw convErr;
-
-      // 3. Query participants of these conversations to find partner
-      const { data: allParticipants } = await supabase
-        .from('chat_participants')
-        .select('conversation_id, user_id, participant_role')
-        .in('conversation_id', convIds);
-
-      const partnerUserIds = Array.from(
-        new Set(
-          (allParticipants || [])
-            .filter((p) => p.user_id !== currentUser.id)
-            .map((p) => p.user_id)
-            .filter((id): id is string => Boolean(id))
-        )
+      const mapped = await conversationRepository.fetchInboxConversations(
+        currentUser.id,
+        currentProfile,
+        {
+          // Repository delegates query with .limit(maxMsgLimit)
+          maxMsgLimit: boundedMaxLimit,
+        }
       );
-
-      // 4. Resolve partner user profiles
-      const profileMap = new Map<string, any>();
-      if (partnerUserIds.length > 0) {
-        const { data: profiles } = await supabase.rpc('get_public_user_profiles', {
-          requested_user_ids: partnerUserIds,
-        });
-        profiles?.forEach((p: any) => {
-          profileMap.set(p.user_id, p);
-        });
-      }
-
-      // 5. Query last message and unread count per conversation (bounded to prevent mobile OOM)
-      const maxMsgLimit = Math.min(200, Math.max(50, convIds.length * 4));
-      const { data: latestMessages } = await supabase
-        .from('chat_messages')
-        .select('conversation_id, body, message_kind, created_at, sender_user_id')
-        .in('conversation_id', convIds)
-        .order('created_at', { ascending: false })
-        .limit(maxMsgLimit);
-
-      const lastMsgMap = new Map<string, any>();
-      const unreadMap = new Map<string, number>();
-
-      const partMap = new Map(participations?.map((p) => [p.conversation_id, p]));
-
-      latestMessages?.forEach((msg) => {
-        if (!lastMsgMap.has(msg.conversation_id)) {
-          lastMsgMap.set(msg.conversation_id, msg);
-        }
-        const part = partMap.get(msg.conversation_id);
-        const lastReadTime = part?.last_read_at ? new Date(part.last_read_at).getTime() : 0;
-        const msgTime = new Date(msg.created_at).getTime();
-
-        if (msg.sender_user_id !== currentUser.id && msgTime > lastReadTime) {
-          unreadMap.set(msg.conversation_id, (unreadMap.get(msg.conversation_id) || 0) + 1);
-        }
-      });
-
-      // 6. Map to ChatConversation
-      const mapped: ChatConversation[] = (convRows || []).map((c: any) => {
-        const part = partMap.get(c.id);
-        const partnerPart = (allParticipants || []).find(
-          (p) => p.conversation_id === c.id && p.user_id !== currentUser.id
-        );
-        const partnerProfile = partnerPart?.user_id ? profileMap.get(partnerPart.user_id) : null;
-
-        const partnerName =
-          partnerProfile?.display_name?.trim() ||
-          partnerProfile?.full_name?.trim() ||
-          c.title ||
-          'DeltanHub Member';
-
-        const lastMsg = lastMsgMap.get(c.id);
-        const previewText = lastMsg
-          ? lastMsg.message_kind === 'voice_note'
-            ? '🎤 Voice note'
-            : lastMsg.message_kind === 'attachments'
-            ? '📷 Photo attachment'
-            : lastMsg.body || 'No messages yet'
-          : 'No messages yet';
-
-        const listingObj = Array.isArray(c.listing) ? c.listing[0] : c.listing;
-
-        return {
-          id: c.id,
-          conversationKind: c.conversation_kind || 'direct',
-          title: c.title || partnerName,
-          preview: previewText,
-          updatedAt: lastMsg?.created_at || c.updated_at || null,
-          unreadCount: unreadMap.get(c.id) || 0,
-          latestIntent: 'general',
-          partnerName: partnerName,
-          partnerSubtitle: listingObj?.title || 'Direct Conversation',
-          partnerAvatarUrl: resolveAvatarUrl(partnerProfile?.avatar_url),
-          partnerUserId: partnerPart?.user_id || null,
-          isArchived: Boolean(part?.archived_at),
-          isMuted: Boolean(part?.muted_until && new Date(part.muted_until).getTime() > Date.now()),
-          isPinned: Boolean(part?.pinned_at),
-          pinnedAt: part?.pinned_at || null,
-          listing: listingObj ? {
-            id: listingObj.id,
-            title: listingObj.title,
-            imageUrl: resolveListingImageUrl(listingObj.cover_image_url),
-          } : null,
-        };
-      });
 
       const sorted = sortConversations(mapped);
       setConversations(sorted);
       void OfflineEngine.saveConversations(sorted);
       void setCachedConversations(sorted);
-    } catch (e) {
+      SyncCoordinator.setStatus('online');
+    } catch (e: any) {
       console.warn('Error loading conversations', e);
+      if (e?.message?.includes('network') || e?.message?.includes('Failed to fetch')) {
+        void SyncCoordinator.checkConnectivity();
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [currentUser]);
+  }, [currentUser, currentProfile]);
+
+  // Dynamic role-based inbox tabs (matching DeltanHub web architecture)
+  const canAssign = canAssignAgents(currentProfile?.mainRole);
+  const userIsAgent = isAgent(currentProfile?.mainRole);
+
+  const inboxTabs = useMemo(() => {
+    const tabs: { key: InboxTab; label: string }[] = [
+      { key: 'all', label: 'All' },
+      { key: 'calls', label: 'Calls' },
+    ];
+    if (canAssign) {
+      tabs.push({ key: 'master-leads', label: 'Master Leads' });
+    } else if (userIsAgent) {
+      tabs.push({ key: 'assigned-leads', label: 'Assigned Leads' });
+    } else {
+      tabs.push({ key: 'leads', label: 'Inquiries' });
+    }
+    tabs.push({ key: 'support', label: 'Support' });
+    tabs.push({ key: 'archived', label: 'Archived' });
+    return tabs;
+  }, [canAssign, userIsAgent]);
 
   useEffect(() => {
     if (currentUser) {
@@ -241,7 +155,23 @@ export default function InboxScreen() {
         } else {
           getCachedConversations().then((cached) => {
             if (cached && cached.length > 0) {
-              setConversations(cached as any);
+              setConversations(
+                cached.map((c) => ({
+                  id: c.id,
+                  conversationKind: c.conversationKind,
+                  preview: c.preview ?? c.lastMessagePreview ?? '',
+                  updatedAt: c.updatedAt ?? c.lastMessageAt ?? '',
+                  unreadCount: c.unreadCount || 0,
+                  partnerName: c.partnerName || 'Conversation',
+                  partnerAvatarUrl: c.partnerAvatarUrl ?? null,
+                  pinned: c.pinned,
+                  muted: c.muted,
+                  archived: c.archived,
+                  isGroup: c.isGroup,
+                  participantCount: c.participantCount,
+                  assigned_to_user_id: c.assigned_to_user_id,
+                }))
+              );
               setLoading(false);
             }
           });
@@ -295,7 +225,11 @@ export default function InboxScreen() {
       .on('broadcast', { event: 'new_message' }, () => {
         triggerDebouncedFetch();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          SyncCoordinator.setStatus('online');
+        }
+      });
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -326,8 +260,16 @@ export default function InboxScreen() {
     if (c.isArchived) {
       return false; // Don't show archived in other tabs
     }
+    if (activeTab === 'master-leads') {
+      // Publisher side: agency/developer viewing master leads
+      return Boolean(c.assignment && canAssign);
+    }
+    if (activeTab === 'assigned-leads') {
+      // Agent side: leads assigned to this agent
+      return Boolean(c.assignment && c.assignment.assignedAgentUserId === currentUser?.id);
+    }
     if (activeTab === 'leads') {
-      return c.conversationKind === 'listing_human' || Boolean(c.listing);
+      return Boolean(c.assignment || c.conversationKind === 'listing_human' || Boolean(c.listing));
     }
     if (activeTab === 'support') {
       return c.conversationKind === 'support';
@@ -353,11 +295,11 @@ export default function InboxScreen() {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, isArchived: !currentArchived } : c))
       );
-      await supabase
-        .from('chat_participants')
-        .update({ archived_at: currentArchived ? null : new Date().toISOString() })
-        .eq('conversation_id', conversationId)
-        .eq('user_id', currentUser.id);
+      await conversationRepository.toggleConversationArchive(
+        conversationId,
+        currentUser.id,
+        !currentArchived
+      );
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
@@ -366,17 +308,14 @@ export default function InboxScreen() {
   const handleToggleMute = async (conversationId: string, currentMuted: boolean) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      const muteUntil = currentMuted
-        ? null
-        : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, isMuted: !currentMuted } : c))
       );
-      await supabase
-        .from('chat_participants')
-        .update({ muted_until: muteUntil })
-        .eq('conversation_id', conversationId)
-        .eq('user_id', currentUser.id);
+      await conversationRepository.toggleConversationMute(
+        conversationId,
+        currentUser.id,
+        !currentMuted
+      );
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
@@ -389,15 +328,9 @@ export default function InboxScreen() {
         prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: currentUnread ? 0 : 1 } : c))
       );
       if (currentUnread) {
-        await supabase.rpc('mark_chat_conversation_read_atomic', {
-          p_conversation_id: conversationId,
-        });
+        await conversationRepository.markConversationRead(conversationId);
       } else {
-        await supabase
-          .from('chat_participants')
-          .update({ last_read_at: null })
-          .eq('conversation_id', conversationId)
-          .eq('user_id', currentUser.id);
+        await conversationRepository.markConversationUnread(conversationId, currentUser.id);
       }
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -426,12 +359,7 @@ export default function InboxScreen() {
         )
       );
 
-      const { error } = await supabase.rpc('toggle_chat_conversation_pinned_atomic', {
-        p_conversation_id: conversationId,
-        p_pinned: willPin,
-      });
-
-      if (error) throw error;
+      await conversationRepository.toggleConversationPinned(conversationId, willPin);
     } catch (e: any) {
       Alert.alert('Pin Error', e.message || 'Unable to update pin status.');
       fetchConversations();
@@ -464,7 +392,7 @@ export default function InboxScreen() {
   return (
     <AnimatedPageWrapper>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <StatusBar style={isDark ? 'light' : 'dark'} translucent backgroundColor="transparent" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
         {/* Edge-to-Edge Header */}
         <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: colors.border }]}>
@@ -490,7 +418,7 @@ export default function InboxScreen() {
                 <Ionicons name="star" size={17} color="#f59e0b" />
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => router.push('/compose' as any)}
+                onPress={() => router.push('/compose' as Href)}
                 style={[styles.composeBtn, { backgroundColor: colors.primary }]}
                 accessibilityRole="button"
                 accessibilityLabel="New message"
@@ -525,23 +453,20 @@ export default function InboxScreen() {
 
           {/* Segmentation Tabs */}
           <View style={styles.tabsContainer}>
-            <View style={styles.tabsList}>
-              {(['all', 'leads', 'support', 'archived'] as InboxTab[]).map((tab) => {
-                const isActive = activeTab === tab;
-                const tabLabel =
-                  tab === 'all'
-                    ? 'All'
-                    : tab === 'leads'
-                    ? 'Leads'
-                    : tab === 'support'
-                    ? 'Support'
-                    : 'Archived';
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tabsList}
+              style={{ flex: 1, marginRight: 8 }}
+            >
+              {inboxTabs.map((tab) => {
+                const isActive = activeTab === tab.key;
                 return (
                   <ScalePressable
-                    key={tab}
+                    key={tab.key}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setActiveTab(tab);
+                      setActiveTab(tab.key);
                     }}
                     style={[
                       styles.tabItem,
@@ -558,41 +483,57 @@ export default function InboxScreen() {
                         isActive && { fontWeight: '700' },
                       ]}
                     >
-                      {tabLabel}
+                      {tab.label}
                     </Text>
                   </ScalePressable>
                 );
               })}
-            </View>
+            </ScrollView>
 
-            {/* Unread Toggle Pill */}
-            <TouchableOpacity
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setUnreadOnly((prev) => !prev);
-              }}
-              style={[
-                styles.unreadFilterPill,
-                unreadOnly && { backgroundColor: colors.primary },
-              ]}
-            >
-              <Text
+            {/* Unread Toggle Pill (for messages) */}
+            {activeTab !== 'calls' && (
+              <TouchableOpacity
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setUnreadOnly((prev) => !prev);
+                }}
                 style={[
-                  styles.unreadFilterText,
-                  { color: unreadOnly ? '#ffffff' : colors.placeholder },
+                  styles.unreadFilterPill,
+                  unreadOnly && { backgroundColor: colors.primary },
                 ]}
               >
-                Unread
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  style={[
+                    styles.unreadFilterText,
+                    { color: unreadOnly ? '#ffffff' : colors.placeholder },
+                  ]}
+                >
+                  Unread
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
         {/* Realtime Network Connectivity & Delta-Sync Banner */}
         <ConnectionBanner />
 
-        {/* Conversation Feed */}
-        {loading && conversations.length === 0 ? (
+        {/* Feed: Calls View vs Conversation Feed */}
+        {activeTab === 'calls' ? (
+          <RecentCallsList
+            currentUserId={currentUser?.id}
+            searchQuery={searchQuery}
+            onSelectConversation={(conversationId, partnerName) => {
+              router.push({
+                pathname: '/thread/[id]',
+                params: {
+                  id: conversationId,
+                  partnerName,
+                },
+              });
+            }}
+          />
+        ) : loading && conversations.length === 0 ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
           </View>
@@ -640,7 +581,7 @@ export default function InboxScreen() {
                 }}
               />
             )}
-            contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 88 }}
           />
         )}
 

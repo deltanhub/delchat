@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   activeBorderOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255,255,255,0.12)',
   },
   captionRowContainer: {

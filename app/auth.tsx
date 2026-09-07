@@ -7,7 +7,10 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Linking,
+  Image,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -55,9 +58,26 @@ export default function AuthScreen() {
     }
   };
 
+  const handleOpenSignUp = async () => {
+    const signupUrl = 'https://deltanhub.com/auth?tab=register';
+    try {
+      if (Platform.OS !== 'web') {
+        await WebBrowser.openBrowserAsync(signupUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+          toolbarColor: colors.primary,
+          controlsColor: '#ffffff',
+        });
+      } else {
+        await Linking.openURL(signupUrl);
+      }
+    } catch {
+      Linking.openURL(signupUrl);
+    }
+  };
+
   return (
     <View style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <StatusBar translucent backgroundColor="transparent" style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AnimatedPageWrapper>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -66,6 +86,15 @@ export default function AuthScreen() {
           <View style={[styles.container, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}>
             {/* Header / Brand */}
             <View style={styles.headerContainer}>
+              <Image
+                source={
+                  colorScheme === 'dark'
+                    ? require('../assets/images/delchat-logo-filled.png')
+                    : require('../assets/images/delchat-logo-outline.png')
+                }
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
               <Text style={[styles.brandText, { color: colors.primary }]}>DelChat</Text>
               <Text style={[styles.subtitle, { color: colors.text }]}>
                 Sign in with your DeltanHub account
@@ -131,6 +160,21 @@ export default function AuthScreen() {
                   <Text style={styles.buttonText}>Sign In</Text>
                 )}
               </ScalePressable>
+
+              {/* Web Sign-Up Prompt */}
+              <View style={styles.signUpPromptContainer}>
+                <Text style={[styles.signUpPromptText, { color: colors.placeholder }]}>
+                  Don't have an account?{' '}
+                </Text>
+                <ScalePressable
+                  onPress={handleOpenSignUp}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.signUpLinkText, { color: colors.primary }]}>
+                    Create Account
+                  </Text>
+                </ScalePressable>
+              </View>
             </View>
 
             {/* Footer */}
@@ -160,7 +204,12 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 36,
+  },
+  logoImage: {
+    width: 80,
+    height: 80,
+    marginBottom: 16,
   },
   brandText: {
     fontSize: Typography.sizes.xxxl,
@@ -211,6 +260,21 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: Typography.sizes.md,
     fontWeight: Typography.weights.bold,
+  },
+  signUpPromptContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 24,
+  },
+  signUpPromptText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: Typography.weights.medium,
+  },
+  signUpLinkText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: Typography.weights.bold,
+    textDecorationLine: 'underline',
   },
   footer: {
     marginTop: 40,

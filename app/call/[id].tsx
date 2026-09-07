@@ -17,6 +17,7 @@ import {
   setSpeakerphone,
   resetAudioAfterCall,
 } from '../../lib/webrtc-audio';
+import { callRepository } from '../../lib/repositories';
 
 export default function CallScreen() {
   const { id: conversationId, kind = 'audio', role = 'initiator', callId } = useLocalSearchParams<{
@@ -333,6 +334,15 @@ export default function CallScreen() {
       });
 
       void updateServerCallSession(activeSessionId, 'decline').catch(() => {});
+      void callRepository.recordCallLogFallback({
+        callId: activeSessionId,
+        conversationId,
+        actorUserId: currentUser.id,
+        partnerUserId,
+        callMode: kind === 'video' ? 'video' : 'audio',
+        action: 'decline',
+        durationSeconds: 0,
+      }).catch(() => {});
       void supabase
         .from('chat_call_sessions')
         .update({
@@ -359,6 +369,7 @@ export default function CallScreen() {
 
   const handleEndCall = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const prevPhase = callPhase;
     setCallPhase('ended');
     if (durationTimerRef.current) clearInterval(durationTimerRef.current);
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
@@ -374,11 +385,21 @@ export default function CallScreen() {
         payload: { reason: 'ended_by_user' },
       });
 
-      void updateServerCallSession(activeSessionId, 'end').catch(() => {});
+      const finalAction = prevPhase === 'connected' ? 'end' : (role === 'initiator' ? 'cancel' : 'missed');
+      void updateServerCallSession(activeSessionId, finalAction === 'cancel' || finalAction === 'missed' ? 'missed' : 'end').catch(() => {});
+      void callRepository.recordCallLogFallback({
+        callId: activeSessionId,
+        conversationId,
+        actorUserId: currentUser.id,
+        partnerUserId,
+        callMode: kind === 'video' ? 'video' : 'audio',
+        action: finalAction,
+        durationSeconds: callDuration,
+      }).catch(() => {});
       void supabase
         .from('chat_call_sessions')
         .update({
-          call_status: 'ended',
+          call_status: finalAction === 'cancel' ? 'canceled' : (finalAction === 'missed' ? 'missed' : 'ended'),
           ended_at: new Date().toISOString(),
           ended_by_user_id: currentUser.id,
           duration_seconds: callDuration,
@@ -411,7 +432,7 @@ export default function CallScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <StatusBar style="light" />
       <CallModal
         visible={true}
         callKind={kind}

@@ -22,16 +22,9 @@ import { Typography } from '../../constants/Typography';
 import { useColorScheme } from '../useColorScheme';
 import ScalePressable from '../ScalePressable';
 import * as Haptics from '../../lib/haptics';
-import { resolveAvatarUrl } from '../../lib/media-utils';
+import { leadsRepository, BrokerageAgent } from '../../lib/repositories';
 
-export interface BrokerageAgent {
-  userId: string;
-  name: string;
-  email?: string;
-  phone?: string;
-  avatarUrl: string | null;
-  role: string;
-}
+export type { BrokerageAgent };
 
 interface ManageAssignmentModalProps {
   visible: boolean;
@@ -79,85 +72,13 @@ export default function ManageAssignmentModal({
         return;
       }
 
-      // 1. Determine tenant/agency context
-      const tenantIds = new Set<string>();
-      tenantIds.add(currentUser.id);
-
-      // Check if current conversation is linked to a crm inquiry with an organization
-      const { data: inq } = await supabase
-        .from('crm_inquiries')
-        .select('agency_user_id, developer_user_id')
-        .eq('conversation_id', conversationId)
-        .maybeSingle();
-
-      if (inq?.agency_user_id) tenantIds.add(inq.agency_user_id);
-      if (inq?.developer_user_id) tenantIds.add(inq.developer_user_id);
-
-      // Check if current user is an agent belonging to an agency
-      const { data: myMemberships } = await supabase
-        .from('agency_agent_memberships')
-        .select('agency_user_id')
-        .eq('agent_user_id', currentUser.id)
-        .eq('membership_status', 'active');
-
-      myMemberships?.forEach((m: any) => {
-        if (m.agency_user_id) tenantIds.add(m.agency_user_id);
-      });
-
-      const tenantIdArray = Array.from(tenantIds);
-
-      // 2. Fetch active agents in the organization(s)
-      const { data: agencyMembers } = await supabase
-        .from('agency_agent_memberships')
-        .select('agent_user_id, position_title')
-        .in('agency_user_id', tenantIdArray)
-        .eq('membership_status', 'active');
-
-      const { data: devMembers } = await supabase
-        .from('developer_agent_memberships')
-        .select('agent_user_id')
-        .in('developer_user_id', tenantIdArray)
-        .eq('membership_status', 'active');
-
-      const candidateUserIds = new Set<string>(tenantIdArray);
-      agencyMembers?.forEach((m: any) => {
-        if (m.agent_user_id) candidateUserIds.add(m.agent_user_id);
-      });
-      devMembers?.forEach((m: any) => {
-        if (m.agent_user_id) candidateUserIds.add(m.agent_user_id);
-      });
-
-      const candidateArray = Array.from(candidateUserIds);
-      if (candidateArray.length === 0) {
-        setAgents([]);
-        return;
-      }
-
-      // 3. Resolve public profiles safely via RPC get_public_user_profiles
-      const { data: profiles, error: rpcError } = await supabase.rpc('get_public_user_profiles', {
-        requested_user_ids: candidateArray,
-      });
-
-      if (rpcError) throw rpcError;
-
-      if (profiles) {
-        const mapped: BrokerageAgent[] = profiles.map((p: any) => ({
-          userId: p.user_id,
-          name: p.display_name?.trim() || p.full_name?.trim() || 'Agent',
-          email: undefined,
-          phone: undefined,
-          avatarUrl: resolveAvatarUrl(p.avatar_url),
-          role:
-            p.main_role === 'agency'
-              ? 'Principal Broker'
-              : p.main_role === 'developer'
-              ? 'Lead Developer'
-              : p.main_role === 'manager'
-              ? 'Sales Manager'
-              : 'Licensed Agent',
-        }));
-        setAgents(mapped);
-      }
+      // Organization tenancy scoping (agency_agent_memberships, developer_agent_memberships)
+      // is encapsulated cleanly within leadsRepository:
+      const agentList = await leadsRepository.fetchBrokerageAgents(
+        currentUser.id,
+        conversationId
+      );
+      setAgents(agentList);
     } catch (err: any) {
       console.warn('[ManageAssignmentModal] Error loading agents:', err);
     } finally {
@@ -198,68 +119,14 @@ export default function ManageAssignmentModal({
     try {
       const { data: authData } = await supabase.auth.getUser();
       const currentUser = authData?.user;
+      if (!currentUser) throw new Error('User not authenticated');
 
-      const isReassignment = Boolean(currentAssignedAgentId);
-      const actionKind = isReassignment ? 'reassigned' : 'assigned';
-
-      // 1. Update conversation assigned_to_user_id
-      await supabase
-        .from('chat_conversations')
-        .update({
-          assigned_to_user_id: selectedAgent.userId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', conversationId);
-
-      // 2. Check and update crm_inquiries if exists
-      const { data: inqRow } = await supabase
-        .from('crm_inquiries')
-        .select('id, agency_user_id')
-        .eq('conversation_id', conversationId)
-        .maybeSingle();
-
-      if (inqRow) {
-        await supabase
-          .from('crm_inquiries')
-          .update({
-            assigned_agent_user_id: selectedAgent.userId,
-            assigned_by_user_id: currentUser?.id || null,
-            assigned_at: new Date().toISOString(),
-            handoff_note: handoffNote.trim() || null,
-            master_lead_status: 'assigned',
-          })
-          .eq('id', inqRow.id);
-
-        // 3. Record in assignment history
-        await supabase.from('crm_inquiry_assignment_history').insert({
-          inquiry_id: inqRow.id,
-          conversation_id: conversationId,
-          agency_user_id: inqRow.agency_user_id || currentUser?.id,
-          assigned_agent_user_id: selectedAgent.userId,
-          assigned_by_user_id: currentUser?.id,
-          action_kind: actionKind,
-          note: handoffNote.trim() || null,
-        });
-      }
-
-      // 4. Post system audit message into chat
-      const auditText = `Lead ${actionKind} to ${selectedAgent.name}${
-        handoffNote.trim() ? ` — Note: "${handoffNote.trim()}"` : ''
-      }`;
-
-      await supabase.from('chat_messages').insert({
-        conversation_id: conversationId,
-        sender_type: 'system',
-        sender_user_id: null,
-        message_kind: 'system',
-        body: auditText,
-        intent: 'assignment',
-        structured_payload: {
-          action: actionKind,
-          assignedAgentId: selectedAgent.userId,
-          assignedAgentName: selectedAgent.name,
-          handoffNote: handoffNote.trim() || null,
-        },
+      await leadsRepository.assignAgentToLead({
+        conversationId,
+        currentUserId: currentUser.id,
+        currentAssignedAgentId,
+        selectedAgent,
+        handoffNote,
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -280,51 +147,11 @@ export default function ManageAssignmentModal({
     try {
       const { data: authData } = await supabase.auth.getUser();
       const currentUser = authData?.user;
+      if (!currentUser) throw new Error('User not authenticated');
 
-      await supabase
-        .from('chat_conversations')
-        .update({
-          assigned_to_user_id: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', conversationId);
-
-      const { data: inqRow } = await supabase
-        .from('crm_inquiries')
-        .select('id, agency_user_id')
-        .eq('conversation_id', conversationId)
-        .maybeSingle();
-
-      if (inqRow) {
-        await supabase
-          .from('crm_inquiries')
-          .update({
-            assigned_agent_user_id: null,
-            assigned_by_user_id: currentUser?.id || null,
-            assigned_at: new Date().toISOString(),
-            handoff_note: null,
-            master_lead_status: 'new',
-          })
-          .eq('id', inqRow.id);
-
-        await supabase.from('crm_inquiry_assignment_history').insert({
-          inquiry_id: inqRow.id,
-          conversation_id: conversationId,
-          agency_user_id: inqRow.agency_user_id || currentUser?.id,
-          assigned_agent_user_id: null,
-          assigned_by_user_id: currentUser?.id,
-          action_kind: 'unassigned',
-          note: 'Unassigned via DelChat mobile governance',
-        });
-      }
-
-      await supabase.from('chat_messages').insert({
-        conversation_id: conversationId,
-        sender_type: 'system',
-        sender_user_id: null,
-        message_kind: 'system',
-        body: 'Lead unassigned from active agent queue.',
-        intent: 'assignment',
+      await leadsRepository.unassignAgentFromLead({
+        conversationId,
+        currentUserId: currentUser.id,
       });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

@@ -1,8 +1,20 @@
 import { supabase } from './supabase';
+import { getCachedChatGateTokenSync, getStoredChatGateToken } from './chat-security-service';
 
 const DELTANHUB_API_URL = (
   process.env.EXPO_PUBLIC_DELTANHUB_API_URL || 'https://deltanhub.com'
 ).replace(/\/+$/, '');
+
+type ChatPinChallengeHandler = () => Promise<boolean>;
+let _pinChallengeHandler: ChatPinChallengeHandler | null = null;
+
+/**
+ * Registers a global handler to be invoked when an API request receives
+ * a 403 'Unlock chat with your PIN first' challenge.
+ */
+export function registerChatPinChallengeHandler(handler: ChatPinChallengeHandler | null): void {
+  _pinChallengeHandler = handler;
+}
 
 export async function fetchWithAuth(
   endpoint: string,
@@ -20,12 +32,19 @@ export async function fetchWithAuth(
     headers.set('Content-Type', 'application/json');
   }
 
+  // Inject chat gate token for authenticated chat security
+  const gateToken = getCachedChatGateTokenSync();
+  if (gateToken && !headers.has('x-chat-gate-token')) {
+    headers.set('x-chat-gate-token', gateToken);
+  }
+
   const url = endpoint.startsWith('http') ? endpoint : `${DELTANHUB_API_URL}${endpoint}`;
 
   console.log(`[API Client] Request to: ${url}`);
   let response = await fetch(url, {
     ...options,
     headers,
+    credentials: 'include',
   });
 
   // Handle 401 Unauthorized with token refresh & retry once
@@ -37,7 +56,29 @@ export async function fetchWithAuth(
       response = await fetch(url, {
         ...options,
         headers,
+        credentials: 'include',
       });
+    }
+  }
+
+  // Handle 403 Forbidden with Chat PIN Challenge & retry once
+  if (response.status === 403 && !isRetry) {
+    const errorBody = await response.clone().text().catch(() => '');
+    if (
+      errorBody.includes('Unlock chat with your PIN first.') ||
+      errorBody.includes('Create your chat PIN before using chat.')
+    ) {
+      console.log('[API Client] 403 Chat PIN challenge required. Triggering challenge handler...');
+      if (_pinChallengeHandler) {
+        const unlocked = await _pinChallengeHandler();
+        if (unlocked) {
+          const freshGateToken = await getStoredChatGateToken();
+          if (freshGateToken) {
+            headers.set('x-chat-gate-token', freshGateToken);
+          }
+          return fetchWithAuth(endpoint, options, true);
+        }
+      }
     }
   }
 

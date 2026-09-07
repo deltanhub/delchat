@@ -11,7 +11,7 @@ import {
   Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import Colors from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { useColorScheme } from '../useColorScheme';
@@ -120,7 +120,7 @@ export const ChatInfoModal: React.FC<ChatInfoModalProps> = ({
                     onClose();
                     const siteUrl = process.env.EXPO_PUBLIC_SITE_URL || 'https://deltanhub.com';
                     Linking.openURL(`${siteUrl}/property/${conversation.listing!.id}`).catch(() => {
-                      router.push(`/property/${conversation.listing!.id}` as any);
+                      router.push(`/property/${conversation.listing!.id}` as Href);
                     });
                   }}
                   style={[styles.propertyRow, { borderColor: colors.border }]}

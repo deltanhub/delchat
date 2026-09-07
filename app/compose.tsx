@@ -242,7 +242,7 @@ export default function ComposeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar translucent backgroundColor="transparent" style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AnimatedPageWrapper>
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: colors.border }]}>
@@ -774,7 +774,7 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weights.bold,
   },
   submittingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.4)',
     zIndex: 100,
     alignItems: 'center',

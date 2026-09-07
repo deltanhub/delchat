@@ -15,17 +15,20 @@ export interface ChatParticipant {
 
 export interface ChatConversation {
   id: string;
-  conversationKind: 'listing_human' | 'assistant' | 'support' | 'direct' | 'broadcast';
-  title: string;
+  conversationKind: 'listing_human' | 'assistant' | 'support' | 'direct' | 'broadcast' | 'group' | string;
+  title?: string;
   preview: string;
   updatedAt: string | null;
   unreadCount: number;
-  latestIntent: 'tour' | 'question' | 'availability' | 'valuation' | 'general' | null;
+  latestIntent?: 'tour' | 'question' | 'availability' | 'valuation' | 'general' | null;
   partnerName: string;
-  partnerSubtitle: string;
+  partnerSubtitle?: string;
   partnerAvatarUrl: string | null;
   partnerUserId?: string | null;
   partnerLastSeenAt?: string | null;
+  isGroup?: boolean;
+  participantCount?: number;
+  assigned_to_user_id?: string | null;
   listing?: {
     id: string;
     title: string;
@@ -37,20 +40,28 @@ export interface ChatConversation {
   pinnedAt?: string | null;
   isBlocked?: boolean;
   blockedByMe?: boolean;
+  canAssignAgents?: boolean;
   assignment?: {
-    id: string;
-    assignedAgentUserId: string;
-    assignedByUserId: string;
-    assignedAt: string;
+    id?: string;
+    inquiryId?: string;
+    leadId?: string;
+    status?: string;
+    assignedAgentUserId?: string | null;
+    assignedAgentName?: string | null;
+    assignedAgentAvatar?: string | null;
+    assignedByUserId?: string | null;
+    assignedAt?: string | null;
     masterLeadStatus?: string;
-    handoffNote?: string;
-    agent: {
+    handoffNote?: string | null;
+    agentShareEnabled?: boolean;
+    agencyUserId?: string | null;
+    agent?: {
       userId: string;
       fullName: string;
       avatarUrl: string | null;
-      email: string;
-      phone: string;
-    };
+      email?: string;
+      phone?: string;
+    } | null;
   } | null;
 }
 
@@ -211,6 +222,38 @@ export default function ConversationRow({
           )}
         </View>
 
+        {/* Optional Row: Lead Assignment & Status Badge */}
+        {conversation.assignment && (
+          <View style={[styles.row, { marginTop: 3 }]}>
+            <View
+              style={[
+                styles.leadBadge,
+                {
+                  backgroundColor: isDark ? '#1a2942' : '#eff6ff',
+                  borderColor: isDark ? '#2563eb' : '#bfdbfe',
+                },
+              ]}
+            >
+              <Ionicons name="briefcase-outline" size={11} color="#2563eb" style={{ marginRight: 3 }} />
+              <Text style={styles.leadBadgeText}>
+                {conversation.canAssignAgents ? 'Master Lead' : 'Assigned Lead'}:{' '}
+                <Text style={{ fontWeight: '700' }}>
+                  {(conversation.assignment.masterLeadStatus || 'new').toUpperCase()}
+                </Text>
+              </Text>
+            </View>
+
+            {conversation.assignment.agent?.fullName && conversation.assignment.agent.fullName !== 'Unassigned' ? (
+              <View style={[styles.agentChip, { backgroundColor: isDark ? '#262626' : '#f3f4f6' }]}>
+                <Ionicons name="person-circle-outline" size={12} color={colors.placeholder} style={{ marginRight: 3 }} />
+                <Text style={[styles.agentChipText, { color: colors.placeholder }]} numberOfLines={1}>
+                  {conversation.assignment.agent.fullName}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+
         {/* Row 3: Preview text and Unread Badge */}
         <View style={styles.row}>
           <Text
@@ -329,5 +372,30 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '700',
+  },
+  leadBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  leadBadgeText: {
+    fontSize: 10,
+    color: '#2563eb',
+    fontWeight: '500',
+  },
+  agentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    maxWidth: 140,
+  },
+  agentChipText: {
+    fontSize: 10,
+    fontWeight: '500',
   },
 });

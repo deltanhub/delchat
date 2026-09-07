@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   overlayDismiss: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   card: {
     width: '100%',

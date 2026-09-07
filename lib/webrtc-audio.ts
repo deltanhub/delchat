@@ -1,4 +1,4 @@
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 
 /**
  * Configure mobile device hardware audio session for VoIP calling.
@@ -6,14 +6,12 @@ import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
  */
 export async function configureAudioForCall(options: { isSpeakerOn: boolean } = { isSpeakerOn: false }): Promise<void> {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: !options.isSpeakerOn,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      shouldDuckAndroid: false,
-      playThroughEarpieceAndroid: !options.isSpeakerOn,
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: !options.isSpeakerOn,
     });
   } catch (err) {
     console.warn('[WebRTC Audio] Failed to set VoIP audio mode:', err);
@@ -25,12 +23,12 @@ export async function configureAudioForCall(options: { isSpeakerOn: boolean } = 
  */
 export async function setSpeakerphone(isSpeakerOn: boolean): Promise<void> {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: !isSpeakerOn,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      shouldDuckAndroid: false,
-      playThroughEarpieceAndroid: !isSpeakerOn,
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: !isSpeakerOn,
     });
   } catch (err) {
     console.warn('[WebRTC Audio] Failed to switch audio output route:', err);
@@ -42,14 +40,12 @@ export async function setSpeakerphone(isSpeakerOn: boolean): Promise<void> {
  */
 export async function resetAudioAfterCall(): Promise<void> {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
-      interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: 'mixWithOthers',
+      shouldRouteThroughEarpiece: false,
     });
   } catch (err) {
     console.warn('[WebRTC Audio] Failed to reset audio mode:', err);

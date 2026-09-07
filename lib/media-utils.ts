@@ -91,7 +91,7 @@ export async function uploadLocalFileToSupabaseStorage(
       uri: localUri,
       name: fileName,
       type: mimeType,
-    } as any);
+    } as unknown as Blob);
 
     const { error: formErr } = await supabaseClient.storage
       .from(bucket)

@@ -48,7 +48,7 @@ export default function AppLockOverlay({ onUnlock, isAuthenticating }: AppLockOv
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 99999, // Ensure it covers everything
     justifyContent: 'center',
     alignItems: 'center',

@@ -19,6 +19,7 @@ import ScalePressable from '../ScalePressable';
 import * as Haptics from '../../lib/haptics';
 
 export interface InquiryFormField {
+  id?: string;
   fieldName: string;
   fieldLabel: string;
   fieldType: 'text' | 'number' | 'date' | 'select' | 'boolean';

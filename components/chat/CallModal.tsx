@@ -877,17 +877,17 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   remoteVideoBackdropImage: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
     opacity: 0.25,
   },
   remoteVideoPlaceholderBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#0d1522',
   },
   videoVignetteOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   centerVideoCard: {
