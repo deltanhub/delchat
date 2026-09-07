@@ -35,6 +35,7 @@ import StarredMessagesModal from '../../components/chat/StarredMessagesModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
 import RecentCallsList from '../../components/chat/RecentCallsList';
 import SyncCoordinator from '../../lib/sync-coordinator';
+import { useChatPinGate } from '../../components/chat/security/ChatPinGateProvider';
 
 export type InboxTab = 'all' | 'calls' | 'master-leads' | 'assigned-leads' | 'leads' | 'support' | 'archived';
 
@@ -44,6 +45,7 @@ export default function InboxScreen() {
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
+  const { isChatUnlocked, promptUnlock } = useChatPinGate();
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -518,6 +520,29 @@ export default function InboxScreen() {
         {/* Realtime Network Connectivity & Delta-Sync Banner */}
         <ConnectionBanner />
 
+        {/* Chat Security Locked Banner (when dismissed/skipped) */}
+        {!isChatUnlocked && (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => promptUnlock(true)}
+            style={[
+              styles.lockedBanner,
+              {
+                backgroundColor: isDark ? 'rgba(74, 15, 31, 0.4)' : '#fcedf2',
+                borderColor: isDark ? '#4a0f1f' : '#f5dbe3',
+              },
+            ]}
+          >
+            <View style={styles.lockedBannerContent}>
+              <Ionicons name="lock-closed" size={16} color={colors.primary} style={{ marginRight: 8 }} />
+              <Text style={[styles.lockedBannerText, { color: colors.text }]}>
+                Chat history is locked. Tap to enter PIN.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+          </TouchableOpacity>
+        )}
+
         {/* Feed: Calls View vs Conversation Feed */}
         {activeTab === 'calls' ? (
           <RecentCallsList
@@ -718,5 +743,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 20,
+  },
+  lockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  lockedBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  lockedBannerText: {
+    fontSize: Typography.sizes.xs,
+    fontFamily: Typography.fontFamily,
+    fontWeight: '600',
   },
 });

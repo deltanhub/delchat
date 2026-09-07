@@ -26,7 +26,7 @@ interface ChatPinGateContextType {
   biometryType: 'FaceID' | 'TouchID' | 'Biometrics' | null;
   setPinRequiredOnDevice: (required: boolean) => Promise<void>;
   setBiometricsEnabled: (enabled: boolean) => Promise<void>;
-  promptUnlock: () => Promise<boolean>;
+  promptUnlock: (force?: boolean) => Promise<boolean>;
   checkChatAccess: () => Promise<ChatAccessStatus | null>;
   lockChat: () => Promise<void>;
 }
@@ -112,8 +112,16 @@ export function ChatPinGateProvider({ children }: { children: React.ReactNode })
     }
   }, []);
 
+  const [isDismissed, setIsDismissed] = useState(false);
+  const isDismissedRef = useRef(false);
+
   // Prompt user to unlock (imperative call from api-client or UI)
-  const promptUnlock = useCallback((): Promise<boolean> => {
+  const promptUnlock = useCallback((force = false): Promise<boolean> => {
+    if (isDismissedRef.current && !force) {
+      return Promise.resolve(false);
+    }
+    isDismissedRef.current = false;
+    setIsDismissed(false);
     return new Promise((resolve) => {
       unlockResolverRef.current = resolve;
       setModalVisible(true);
@@ -129,6 +137,10 @@ export function ChatPinGateProvider({ children }: { children: React.ReactNode })
   // Register the 403 challenge handler with api-client
   useEffect(() => {
     registerChatPinChallengeHandler(async () => {
+      // If user deliberately dismissed the prompt, do not trap them in an infinite loop on background fetch
+      if (isDismissedRef.current) {
+        return false;
+      }
       console.log('[ChatPinGateProvider] Handling 403 challenge...');
       const required = await isPinRequiredOnDevice();
       const savedPin = await getSavedChatPin();
@@ -154,9 +166,13 @@ export function ChatPinGateProvider({ children }: { children: React.ReactNode })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: string, session: any) => {
       if (event === 'SIGNED_IN' || (event === 'INITIAL_SESSION' && session)) {
+        isDismissedRef.current = false;
+        setIsDismissed(false);
         await checkChatAccess();
       } else if (event === 'SIGNED_OUT' || !session) {
         await clearChatGateSession();
+        isDismissedRef.current = false;
+        setIsDismissed(false);
         setIsChatUnlocked(false);
         setModalVisible(false);
         if (unlockResolverRef.current) {
@@ -172,6 +188,8 @@ export function ChatPinGateProvider({ children }: { children: React.ReactNode })
   }, [checkChatAccess]);
 
   const handleUnlocked = () => {
+    isDismissedRef.current = false;
+    setIsDismissed(false);
     setIsChatUnlocked(true);
     setIsSetupRequired(false);
     setModalVisible(false);
@@ -182,6 +200,8 @@ export function ChatPinGateProvider({ children }: { children: React.ReactNode })
   };
 
   const handleCancel = () => {
+    isDismissedRef.current = true;
+    setIsDismissed(true);
     setModalVisible(false);
     if (unlockResolverRef.current) {
       unlockResolverRef.current(false);

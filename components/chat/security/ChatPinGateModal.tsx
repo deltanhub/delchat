@@ -256,17 +256,17 @@ export default function ChatPinGateModal({
           <Text style={[styles.title, { color: colors.text }]}>
             {isSetupRequired
               ? setupStep === 'create'
-                ? 'Create Chat PIN'
-                : 'Confirm Chat PIN'
-              : 'Chat Security Gate'}
+                ? 'Create your PIN for chats'
+                : 'Confirm your chat PIN'
+              : 'Enter your PIN to restore your chats'}
           </Text>
 
           <Text style={[styles.subtitle, { color: colors.placeholder }]}>
             {isSetupRequired
               ? setupStep === 'create'
-                ? 'Create a 4-digit PIN to secure your encrypted messages.'
-                : 'Re-enter your 4-digit PIN to confirm.'
-              : 'Enter your DeltanHub PIN to unlock private encrypted conversations.'}
+                ? 'Create this PIN the first time you open chats. It protects conversations separately from your main account login.'
+                : 'Re-enter your PIN to confirm and secure your account.'
+              : 'Enter your DeltanHub chat PIN to decrypt and restore your conversations.'}
           </Text>
 
           {/* Dynamic PIN Indicator Dots */}
@@ -313,74 +313,90 @@ export default function ChatPinGateModal({
             />
           )}
 
-          {/* Keypad */}
-          <View style={styles.keypad}>
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-              <ScalePressable
-                key={digit}
-                onPress={() => handleKeyPress(digit)}
-                style={[
-                  styles.key,
-                  {
-                    backgroundColor: isDark ? '#141416' : '#ffffff',
-                    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                  },
-                ]}
-              >
-                <Text style={[styles.keyDigit, { color: colors.text }]}>{digit}</Text>
-              </ScalePressable>
+          {/* Keypad Grid (3 columns x 4 rows) */}
+          <View style={styles.keypadContainer}>
+            {[
+              ['1', '2', '3'],
+              ['4', '5', '6'],
+              ['7', '8', '9'],
+              ['action', '0', 'backspace'],
+            ].map((row, rIdx) => (
+              <View key={rIdx} style={styles.keypadRow}>
+                {row.map((item) => {
+                  if (item === 'action') {
+                    if (biometryInfo.available && hasSavedPin && !isSetupRequired) {
+                      return (
+                        <ScalePressable
+                          key="bio"
+                          onPress={handleBiometricUnlock}
+                          containerStyle={styles.keyContainer}
+                          style={[
+                            styles.key,
+                            {
+                              backgroundColor: isDark ? '#141416' : '#ffffff',
+                              borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name={biometryInfo.biometryType === 'FaceID' ? 'scan-outline' : 'finger-print-outline'}
+                            size={26}
+                            color="#4a0f1f"
+                          />
+                        </ScalePressable>
+                      );
+                    }
+                    return <View key="empty" style={styles.keyContainer} />;
+                  }
+
+                  if (item === 'backspace') {
+                    return (
+                      <ScalePressable
+                        key="del"
+                        onPress={handleDelete}
+                        containerStyle={styles.keyContainer}
+                        style={[
+                          styles.key,
+                          {
+                            backgroundColor: isDark ? '#141416' : '#ffffff',
+                            borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
+                          },
+                        ]}
+                      >
+                        <Ionicons name="backspace-outline" size={24} color={colors.text} />
+                      </ScalePressable>
+                    );
+                  }
+
+                  return (
+                    <ScalePressable
+                      key={item}
+                      onPress={() => handleKeyPress(item)}
+                      containerStyle={styles.keyContainer}
+                      style={[
+                        styles.key,
+                        {
+                          backgroundColor: isDark ? '#141416' : '#ffffff',
+                          borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.keyDigit, { color: colors.text }]}>{item}</Text>
+                    </ScalePressable>
+                  );
+                })}
+              </View>
             ))}
-
-            {/* Biometric or Empty Spacer */}
-            {biometryInfo.available && hasSavedPin && !isSetupRequired ? (
-              <ScalePressable
-                onPress={handleBiometricUnlock}
-                style={[
-                  styles.keyAction,
-                  {
-                    backgroundColor: isDark ? '#141416' : '#ffffff',
-                    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                  },
-                ]}
-              >
-                <Ionicons
-                  name={biometryInfo.biometryType === 'FaceID' ? 'scan-outline' : 'finger-print-outline'}
-                  size={26}
-                  color="#4a0f1f"
-                />
-              </ScalePressable>
-            ) : (
-              <View style={styles.keyEmpty} />
-            )}
-
-            {/* Zero Key */}
-            <ScalePressable
-              onPress={() => handleKeyPress('0')}
-              style={[
-                styles.key,
-                {
-                  backgroundColor: isDark ? '#141416' : '#ffffff',
-                  borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                },
-              ]}
-            >
-              <Text style={[styles.keyDigit, { color: colors.text }]}>0</Text>
-            </ScalePressable>
-
-            {/* Backspace Key */}
-            <ScalePressable
-              onPress={handleDelete}
-              style={[
-                styles.keyAction,
-                {
-                  backgroundColor: isDark ? '#141416' : '#ffffff',
-                  borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                },
-              ]}
-            >
-              <Ionicons name="backspace-outline" size={26} color={colors.text} />
-            </ScalePressable>
           </View>
+
+          {/* Skip for Now Action Button */}
+          {onCancel && (
+            <ScalePressable onPress={onCancel} style={styles.skipButton}>
+              <Text style={[styles.skipButtonText, { color: colors.placeholder }]}>
+                {isSetupRequired ? 'Set Up Later' : 'Skip for Now'}
+              </Text>
+            </ScalePressable>
+          )}
         </View>
       </View>
     </Modal>
@@ -455,48 +471,51 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: Typography.fontFamily,
   },
-  keypad: {
-    width: '85%',
-    maxWidth: 320,
+  keypadContainer: {
+    width: '100%',
+    maxWidth: 280,
+    marginTop: 8,
+  },
+  keypadRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginTop: 12,
-    rowGap: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+    width: '100%',
+  },
+  keyContainer: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
   },
   key: {
-    width: '30%',
-    height: 64,
-    borderRadius: 32,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   keyDigit: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '600',
     fontFamily: Typography.fontFamily,
   },
-  keyEmpty: {
-    width: '30%',
-    height: 64,
-  },
-  keyAction: {
-    width: '30%',
-    height: 64,
-    borderRadius: 32,
+  skipButton: {
+    marginTop: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+  },
+  skipButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
   },
 });
