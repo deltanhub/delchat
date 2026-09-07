@@ -1417,4 +1417,34 @@ The 20 QA Specialists identified the following exact failure points in the initi
 * **What Is Left To Be Done**:
   - Production cloud compilation via `eas build --profile production`.
 
+---
+
+### [Log Entry: 2026-09-07] Chat Security PIN Gate Keypad Grid Fix & Dismissal Grace Mode
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - [`components/chat/security/ChatPinGateModal.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/components/chat/security/ChatPinGateModal.tsx):
+    - Refactored numeric keypad from flex-wrapped array into a structured 3-column x 4-row grid (`KEYPAD_ROWS = [['1','2','3'], ['4','5','6'], ['7','8','9'], ['action','0','backspace']]`). Fixed critical layout bug where `ScalePressable`'s inner `Animated.View` squashed all 12 buttons into thin vertical slits.
+    - Added dedicated circular touch targets (68x68pt, border radius 34) with centered labels, secondary letters, and haptic feedback.
+    - Added "Skip for Now" / "Set Up Later" dismissal action button below keypad.
+    - Updated copy to 1:1 match DeltanHub web (`'Enter your PIN to restore your chats'` / `'Create your PIN for chats'`).
+  - [`components/chat/security/ChatPinGateProvider.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/components/chat/security/ChatPinGateProvider.tsx):
+    - Added `isDismissed` and `isDismissedRef` session state.
+    - In `handleCancel`, sets `isDismissed = true` to allow user to navigate the app without lock.
+    - In `registerChatPinChallengeHandler`, prevented automatic modal re-opening when `isDismissedRef.current === true`, completely curing the inescapable 403 API loop.
+    - Extended `promptUnlock(force?: boolean)` with manual force parameter for user-initiated unlock.
+  - [`app/(tabs)/index.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/app/(tabs)/index.tsx):
+    - Imported `useChatPinGate` and rendered non-intrusive locked notification banner below `<ConnectionBanner />` (`"Chat history is locked. Tap to enter PIN."`), providing instant one-tap access to unlock.
+* **Why It Was Done**:
+  - Fixed severe UX blockers: unclickable squashed keypad, inescapable modal re-trigger loop upon dismissal, lack of a skip option, and visual divergence from web.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (zero errors).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 54/54 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 106/106 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Production cloud compilation via `eas build --profile production`.
+
+
 

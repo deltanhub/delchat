@@ -342,17 +342,49 @@ node scripts/run_master_system_audit.js
 
 ---
 
+---
+
+### Chat Security PIN Gate Keypad Grid Fix & Dismissal Grace Mode (Completed 2026-09-07)
+
+- **What Was Done**:
+  - [`components/chat/security/ChatPinGateModal.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/components/chat/security/ChatPinGateModal.tsx):
+    - Replaced flex-wrapped numeric keypad with structured 3x4 grid (`KEYPAD_ROWS = [['1','2','3'], ['4','5','6'], ['7','8','9'], ['action','0','backspace']]`).
+    - Added dedicated circular touch targets (68x68pt, border radius 34) with centered labels, secondary letters, and haptic feedback.
+    - Added "Skip for Now" / "Set Up Later" dismissal button below keypad.
+    - Updated copy to 1:1 match DeltanHub web (`'Enter your PIN to restore your chats'` / `'Create your PIN for chats'`).
+  - [`components/chat/security/ChatPinGateProvider.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/components/chat/security/ChatPinGateProvider.tsx):
+    - Added `isDismissed` session state.
+    - Suppressed automated 403 challenge re-prompting while dismissed to eradicate the rapid modal re-opening loop.
+    - Extended `promptUnlock(force?: boolean)` to allow manual re-prompting.
+  - [`app/(tabs)/index.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/app/(tabs)/index.tsx):
+    - Rendered non-intrusive locked notification banner below `<ConnectionBanner />` (`"Chat history is locked. Tap to enter PIN."`).
+- **Why It Was Done**:
+  - Eliminated squashed keypad rendering glitch caused by `ScalePressable` flex wrapping.
+  - Cured infinite modal re-trigger loop that trapped users when closing or ignoring the gate.
+  - Aligned mobile security gate visual design and copy with the DeltanHub web source of truth.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` --> Exited with code `0`.
+  - `node scripts/run_comprehensive_audit.js` --> **62 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/test_clean_architecture.js` --> **54 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/test_presence_sync.js` --> **ALL TESTS PASSED (100%)**.
+  - `node scripts/test_role_permissions.js` --> **10 PASSED / 0 FAILED (100% Pass Rate)**.
+  - `node scripts/run_master_system_audit.js` --> **106 PASSED / 0 FAILED (100% Pass Rate)**.
+
+---
+
 ## 7. What Is Left To Be Done
 
-All 6 architectural and feature phases are **100% COMPLETED and VERIFIED**:
+All architectural, feature, and security fixes are **100% COMPLETED and VERIFIED**:
 - Phase 1: Polymorphic Message Bubble Decomposition [COMPLETED]
 - Phase 2: Domain Repository Layer & Data Decoupling [COMPLETED]
 - Phase 3: Custom Domain Hooks & Thread Screen Deconstruction [COMPLETED]
 - Phase 4: CRM Leads Screen Decomposition [COMPLETED]
 - Phase 5: Strict Domain Typing & Zero-Any Cleanliness [COMPLETED]
 - Phase 6: Chat Inquiries & Unified CRM Refactoring [COMPLETED]
+- Chat Security PIN Gate Keypad Grid & Dismissal Grace Mode [COMPLETED]
 
 The remaining task is **Production Cloud Compilation**:
 1. Refresh [`README.md`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/README.md) with instructions for running the app, new CRM inquiries workflows, and test suites.
 2. Trigger live production EAS builds (`eas build -p android --profile production` / `eas build -p ios --profile production`) when deployment credentials are ready.
+
 
