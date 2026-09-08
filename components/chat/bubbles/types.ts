@@ -80,6 +80,7 @@ export interface MessageBubbleProps {
   onReactToMessage?: (messageId: string, emoji: string) => void;
   onPressMedia?: (url: string, kind: string, title?: string) => void;
   onLongPressMessage?: (message: ChatMessage) => void;
+  onReportAgent?: (card?: any) => void;
 }
 
 export const formatMsgTime = (timeStr: string): string => {

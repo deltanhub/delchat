@@ -139,7 +139,10 @@ export const SyncCoordinator = {
         return 0;
       }
 
-      this.setStatus('syncing');
+      const wasOffline = _syncStatus === 'offline';
+      if (wasOffline) {
+        this.setStatus('syncing');
+      }
       let successCount = 0;
 
       for (const item of items) {
@@ -261,11 +264,12 @@ export const SyncCoordinator = {
         }
       }
 
-      this.setStatus('online');
+      if (wasOffline) {
+        this.setStatus('online');
+      }
       return successCount;
     } catch (e) {
       console.warn('[SyncCoordinator] Outbox drain failed:', e);
-      this.setStatus('offline');
       return 0;
     } finally {
       _isDraining = false;
@@ -290,7 +294,10 @@ export const SyncCoordinator = {
         return [];
       }
 
-      this.setStatus('syncing');
+      const wasOffline = _syncStatus === 'offline';
+      if (wasOffline) {
+        this.setStatus('syncing');
+      }
 
       const { data: rawRows, error } = await supabaseClient
         .from('chat_messages')
@@ -305,7 +312,9 @@ export const SyncCoordinator = {
 
       if (error) throw error;
       if (!rawRows || rawRows.length === 0) {
-        this.setStatus('online');
+        if (wasOffline) {
+          this.setStatus('online');
+        }
         return [];
       }
 
@@ -389,11 +398,12 @@ export const SyncCoordinator = {
 
       // Save into local cache
       await OfflineEngine.saveMessages(conversationId, mappedNew);
-      this.setStatus('online');
+      if (wasOffline) {
+        this.setStatus('online');
+      }
       return mappedNew;
     } catch (err) {
       console.warn('[SyncCoordinator] Delta sync failed:', err);
-      this.setStatus('offline');
       return [];
     }
   },

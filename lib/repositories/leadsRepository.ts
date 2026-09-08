@@ -10,14 +10,22 @@ export interface BrokerageAgent {
   phone?: string;
   avatarUrl: string | null;
   role: string;
+  agentType?: 'internal' | 'external';
+  positionTitle?: string | null;
 }
 
 export interface InternalNoteItem {
   id: string;
-  authorUserId: string;
+  inquiryId?: string;
+  inquiry_id?: string;
+  authorUserId?: string;
+  author_user_id?: string;
   authorName: string;
+  author_name?: string;
   body: string;
+  visibility?: 'company_only' | 'company_and_agent';
   createdAt: string;
+  created_at?: string;
 }
 
 export interface AssignAgentParams {
@@ -83,23 +91,50 @@ export const leadsRepository = {
     // Fetch active agents in the organization(s)
     const { data: agencyMembers } = await supabase
       .from('agency_agent_memberships')
-      .select('agent_user_id, position_title')
+      .select('agent_user_id, position_title, relationship_kind')
       .in('agency_user_id', tenantIdArray)
       .eq('membership_status', 'active');
 
     const { data: devMembers } = await supabase
       .from('developer_agent_memberships')
-      .select('agent_user_id')
+      .select('agent_user_id, position_title, relationship_kind')
       .in('developer_user_id', tenantIdArray)
       .eq('membership_status', 'active');
 
-    const candidateUserIds = new Set<string>(tenantIdArray);
+    const candidateUserIds = new Set<string>();
+    const agentMetaMap = new Map<
+      string,
+      {
+        agentType: 'internal' | 'external';
+        positionTitle?: string | null;
+      }
+    >();
+
     agencyMembers?.forEach((m: any) => {
-      if (m.agent_user_id) candidateUserIds.add(m.agent_user_id);
+      if (m.agent_user_id && !tenantIds.has(m.agent_user_id)) {
+        candidateUserIds.add(m.agent_user_id);
+        agentMetaMap.set(m.agent_user_id, {
+          agentType: m.relationship_kind === 'external' ? 'external' : 'internal',
+          positionTitle: m.position_title || null,
+        });
+      }
     });
+
     devMembers?.forEach((m: any) => {
-      if (m.agent_user_id) candidateUserIds.add(m.agent_user_id);
+      if (m.agent_user_id && !tenantIds.has(m.agent_user_id)) {
+        candidateUserIds.add(m.agent_user_id);
+        if (!agentMetaMap.has(m.agent_user_id)) {
+          agentMetaMap.set(m.agent_user_id, {
+            agentType: m.relationship_kind === 'external' ? 'external' : 'internal',
+            positionTitle: m.position_title || null,
+          });
+        }
+      }
     });
+
+    // Explicitly guarantee the logged-in agency/org account itself is excluded from assignable subordinate agents
+    candidateUserIds.delete(currentUserId);
+    tenantIds.forEach((tId) => candidateUserIds.delete(tId));
 
     const candidateArray = Array.from(candidateUserIds);
     if (candidateArray.length === 0) {
@@ -115,21 +150,30 @@ export const leadsRepository = {
 
     if (!profiles) return [];
 
-    return profiles.map((p: any) => ({
-      userId: p.user_id,
-      name: p.display_name?.trim() || p.full_name?.trim() || 'Agent',
-      email: undefined,
-      phone: undefined,
-      avatarUrl: resolveAvatarUrl(p.avatar_url),
-      role:
-        p.main_role === 'agency'
-          ? 'Principal Broker'
-          : p.main_role === 'developer'
-          ? 'Lead Developer'
-          : p.main_role === 'manager'
-          ? 'Sales Manager'
-          : 'Licensed Agent',
-    }));
+    return profiles.map((p: any) => {
+      const meta = agentMetaMap.get(p.user_id);
+      const isExternal =
+        meta?.agentType === 'external' || p.agent_account_kind === 'external';
+
+      return {
+        userId: p.user_id,
+        name: p.display_name?.trim() || p.full_name?.trim() || 'Agent',
+        email: undefined,
+        phone: undefined,
+        avatarUrl: resolveAvatarUrl(p.avatar_url),
+        role:
+          meta?.positionTitle ||
+          (p.main_role === 'agency'
+            ? 'Principal Broker'
+            : p.main_role === 'developer'
+            ? 'Lead Developer'
+            : p.main_role === 'manager'
+            ? 'Sales Manager'
+            : 'Licensed Agent'),
+        agentType: (isExternal ? 'external' : 'internal') as 'internal' | 'external',
+        positionTitle: meta?.positionTitle || null,
+      };
+    });
   },
 
   /**
@@ -395,6 +439,7 @@ export const leadsRepository = {
 
   /**
    * Fetches internal broker notes for a lead inquiry.
+   * Hits DeltanHub Web API /api/dashboard/master-leads/${inquiryId}/notes with resilient Supabase fallback.
    */
   async fetchInternalNotes(params: {
     inquiryId?: string | null;
@@ -416,37 +461,72 @@ export const leadsRepository = {
     }
 
     if (activeInqId) {
+      // 1. Primary: Query DeltanHub Web API route for server parity, access control & visibility tier enforcement
+      try {
+        const res = await fetchWithAuth(`/api/dashboard/master-leads/${activeInqId}/notes`);
+        if (res && Array.isArray(res.notes)) {
+          const mapped: InternalNoteItem[] = res.notes.map((n: any) => ({
+            id: n.id,
+            inquiryId: activeInqId,
+            inquiry_id: activeInqId,
+            authorUserId: n.authorUserId,
+            author_user_id: n.authorUserId,
+            authorName: n.authorName || 'Team Member',
+            author_name: n.authorName || 'Team Member',
+            body: n.body,
+            visibility: n.visibility || 'company_and_agent',
+            createdAt: n.createdAt,
+            created_at: n.createdAt,
+          }));
+          return { inquiryId: activeInqId, notes: mapped };
+        }
+      } catch (apiErr: any) {
+        console.log('[leadsRepository] fetchInternalNotes API fallback to Supabase:', apiErr?.message);
+      }
+
+      // 2. Resilient Fallback: Direct Supabase query backed by PostgreSQL RLS
       const { data: noteRows, error: noteErr } = await supabase
         .from('master_lead_internal_notes')
-        .select('id, author_user_id, body, created_at')
+        .select('id, inquiry_id, author_user_id, body, visibility, created_at')
         .eq('inquiry_id', activeInqId)
         .order('created_at', { ascending: false });
 
       if (!noteErr && noteRows && noteRows.length > 0) {
-        const authorIds = Array.from(new Set(noteRows.map((n: any) => n.author_user_id)));
-        const { data: profiles } = await supabase
-          .from('user_profiles')
-          .select('user_id, display_name, full_name')
-          .in('user_id', authorIds);
-
-        const nameMap = new Map(
-          (profiles || []).map((p: any) => [p.user_id, p.display_name || p.full_name || 'Agent'])
-        );
+        const authorIds = Array.from(new Set(noteRows.map((n: any) => n.author_user_id).filter(Boolean)));
+        let profileMap = new Map<string, string>();
+        if (authorIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('user_profiles')
+            .select('user_id, display_name, full_name')
+            .in('user_id', authorIds);
+          (profiles || []).forEach((p: any) => {
+            profileMap.set(p.user_id, p.display_name || p.full_name || 'Agent');
+          });
+        }
 
         return {
           inquiryId: activeInqId,
-          notes: noteRows.map((n: any) => ({
-            id: n.id,
-            authorUserId: n.author_user_id,
-            authorName: nameMap.get(n.author_user_id) || 'Team Member',
-            body: n.body,
-            createdAt: n.created_at,
-          })),
+          notes: noteRows.map((n: any) => {
+            const authorName = profileMap.get(n.author_user_id) || 'Team Member';
+            return {
+              id: n.id,
+              inquiryId: activeInqId,
+              inquiry_id: activeInqId,
+              authorUserId: n.author_user_id,
+              author_user_id: n.author_user_id,
+              authorName,
+              author_name: authorName,
+              body: n.body,
+              visibility: n.visibility || 'company_and_agent',
+              createdAt: n.created_at,
+              created_at: n.created_at,
+            };
+          }),
         };
       }
     }
 
-    // Fallback: Query chat_messages where intent = 'internal_note'
+    // 3. Fallback: Query chat_messages where intent = 'internal_note'
     if (conversationId) {
       const { data: msgRows, error: msgErr } = await supabase
         .from('chat_messages')
@@ -475,9 +555,13 @@ export const leadsRepository = {
           notes: msgRows.map((m: any) => ({
             id: m.id,
             authorUserId: m.sender_user_id,
+            author_user_id: m.sender_user_id,
             authorName: nameMap.get(m.sender_user_id) || 'Team Member',
+            author_name: nameMap.get(m.sender_user_id) || 'Team Member',
             body: m.body,
+            visibility: 'company_and_agent' as const,
             createdAt: m.created_at,
+            created_at: m.created_at,
           })),
         };
       }
@@ -488,20 +572,55 @@ export const leadsRepository = {
 
   /**
    * Adds an internal note to a lead.
+   * Dispatches to DeltanHub Web API /api/dashboard/master-leads/${inquiryId}/notes
+   * with resilient direct Supabase fallback protected by PostgreSQL RLS.
    */
   async addInternalNote(params: {
     inquiryId: string;
     authorUserId: string;
     body: string;
-  }): Promise<void> {
-    const { inquiryId, authorUserId, body } = params;
-    const { error } = await supabase.from('master_lead_internal_notes').insert({
-      inquiry_id: inquiryId,
-      author_user_id: authorUserId,
-      body,
-      visibility: 'company_and_agent',
-    });
+    visibility?: 'company_only' | 'company_and_agent';
+  }): Promise<{ id: string }> {
+    const { inquiryId, authorUserId, body, visibility = 'company_and_agent' } = params;
+
+    // 1. Primary: Call DeltanHub Web API /api/dashboard/master-leads/${inquiryId}/notes
+    // for server-side validation, permission checks and dashboard activity logging (lead_note_added)
+    try {
+      const response = await fetchWithAuth(`/api/dashboard/master-leads/${inquiryId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          body,
+          visibility,
+        }),
+      });
+
+      if (response && (response.success || !response.error)) {
+        return { id: response.id || `note-${Date.now()}` };
+      }
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+    } catch (apiErr: any) {
+      console.log('[leadsRepository] addInternalNote API fallback to Supabase:', apiErr?.message);
+      if (apiErr?.message?.includes('Unauthorized') || apiErr?.message?.includes('visibility')) {
+        throw apiErr;
+      }
+    }
+
+    // 2. Resilient Fallback: Direct Supabase insert protected by PostgreSQL RLS
+    const { data, error } = await supabase
+      .from('master_lead_internal_notes')
+      .insert({
+        inquiry_id: inquiryId,
+        author_user_id: authorUserId,
+        body,
+        visibility,
+      })
+      .select('id')
+      .single();
+
     if (error) throw error;
+    return { id: data?.id || `note-${Date.now()}` };
   },
 
   /**

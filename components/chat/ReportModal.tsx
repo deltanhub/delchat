@@ -25,16 +25,20 @@ const REPORT_REASONS = [
   { id: 'other', label: 'Other Policy Violation' },
 ];
 
-interface ReportModalProps {
+export interface ReportModalProps {
   visible: boolean;
   targetName: string;
+  agencyName?: string | null;
+  isAssignedAgentReport?: boolean;
   onClose: () => void;
-  onSubmitReport: (reason: string, details: string) => Promise<void>;
+  onSubmitReport: (reason: string, details: string, messagesConsent: boolean) => Promise<void>;
 }
 
 export default function ReportModal({
   visible,
   targetName,
+  agencyName,
+  isAssignedAgentReport = false,
   onClose,
   onSubmitReport,
 }: ReportModalProps) {
@@ -45,6 +49,7 @@ export default function ReportModal({
 
   const [selectedReason, setSelectedReason] = useState(REPORT_REASONS[0].label);
   const [details, setDetails] = useState('');
+  const [messagesConsent, setMessagesConsent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!visible) return null;
@@ -53,8 +58,9 @@ export default function ReportModal({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsSubmitting(true);
     try {
-      await onSubmitReport(selectedReason, details.trim());
+      await onSubmitReport(selectedReason, details.trim(), messagesConsent);
       setDetails('');
+      setMessagesConsent(false);
       onClose();
     } catch {
       // Handled in parent
@@ -84,9 +90,13 @@ export default function ReportModal({
           {/* Header */}
           <View style={styles.header}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.title, { color: colors.text }]}>Report Conversation</Text>
-              <Text style={[styles.subtitle, { color: colors.placeholder }]}>
-                Report {targetName} for moderation review
+              <Text style={[styles.title, { color: colors.text }]}>
+                {isAssignedAgentReport || agencyName ? 'Report Agent' : 'Report Conversation'}
+              </Text>
+              <Text style={[styles.subtitle, { color: colors.placeholder }]} numberOfLines={2}>
+                {isAssignedAgentReport || agencyName
+                  ? `Report ${targetName} to ${agencyName || 'supervising firm'} management`
+                  : `Report ${targetName} for moderation review`}
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -137,7 +147,11 @@ export default function ReportModal({
             <TextInput
               value={details}
               onChangeText={setDetails}
-              placeholder="Provide context for our trust and safety team..."
+              placeholder={
+                agencyName
+                  ? `Provide context for ${agencyName} management to investigate...`
+                  : 'Provide context for our trust and safety team...'
+              }
               placeholderTextColor={colors.placeholder}
               multiline
               numberOfLines={3}
@@ -150,6 +164,47 @@ export default function ReportModal({
                 },
               ]}
             />
+          </View>
+
+          {/* Reveal Chat History / Messages Consent Toggle Section */}
+          <View style={styles.section}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setMessagesConsent((prev) => !prev);
+              }}
+              style={[
+                styles.consentCard,
+                {
+                  backgroundColor: messagesConsent
+                    ? (isDark ? '#2c1219' : '#fef2f4')
+                    : (isDark ? '#24242a' : '#f9fafb'),
+                  borderColor: messagesConsent
+                    ? colors.primary
+                    : (isDark ? '#33333b' : '#e5e7eb'),
+                },
+              ]}
+            >
+              <View style={styles.consentHeaderRow}>
+                <Ionicons
+                  name={messagesConsent ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={messagesConsent ? colors.primary : colors.placeholder}
+                  style={{ marginRight: 10, marginTop: 1 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.consentTitle, { color: colors.text }]}>
+                    Reveal Chat History for Review
+                  </Text>
+                  <Text style={[styles.consentSubtitle, { color: isDark ? '#d1d5db' : '#5f6f83' }]}>
+                    {messagesConsent
+                      ? `I consent to allow ${agencyName ? agencyName + ' management' : 'supervising management'} to read messages in this thread to investigate and take action.`
+                      : 'Keep messages private. Only your complaint reason and details will be submitted without granting access to chat history.'}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
           </View>
 
           {/* Buttons */}
@@ -248,6 +303,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: Typography.fontFamily,
     textAlignVertical: 'top',
+  },
+  consentCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+  },
+  consentHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  consentTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: Typography.fontFamily,
+    marginBottom: 2,
+  },
+  consentSubtitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: Typography.fontFamily,
   },
   buttonRow: {
     flexDirection: 'row',

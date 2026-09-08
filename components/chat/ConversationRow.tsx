@@ -50,6 +50,13 @@ export interface ChatConversation {
   isBlocked?: boolean;
   blockedByMe?: boolean;
   canAssignAgents?: boolean;
+  inquiryId?: string | null;
+  agencyName?: string | null;
+  assignedAgent?: {
+    userId: string;
+    fullName: string;
+    avatarUrl: string | null;
+  } | null;
   assignment?: {
     id?: string;
     inquiryId?: string;
@@ -64,6 +71,7 @@ export interface ChatConversation {
     handoffNote?: string | null;
     agentShareEnabled?: boolean;
     agencyUserId?: string | null;
+    agencyName?: string | null;
     agent?: {
       userId: string;
       fullName: string;

@@ -46,6 +46,7 @@ export default function MessageBubble({
   onReactToMessage,
   onPressMedia,
   onLongPressMessage,
+  onReportAgent,
 }: MessageBubbleProps) {
   // Never render confidential brokerage internal notes in client feeds
   if (message.intent === 'internal_note' || message.structuredPayload?.isInternalOnly) {
@@ -60,6 +61,7 @@ export default function MessageBubble({
         card={assignedAgentCard}
         message={message}
         isStarred={isStarred}
+        onReportAgent={onReportAgent}
       />
     );
   }

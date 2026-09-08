@@ -41,15 +41,39 @@ export default function ChatListingBanner({ listing }: ChatListingBannerProps) {
     .filter(Boolean)
     .join(' · ');
 
+  const normalizedStatus = (listing.listingStatus || '').trim().toLowerCase();
+  const isSold = normalizedStatus.includes('sold');
+  const isRented = normalizedStatus.includes('rented');
+  const isOffer = normalizedStatus.includes('offer') || normalizedStatus.includes('pending');
+  const isOffMarket = normalizedStatus.includes('inactive') || normalizedStatus.includes('delist') || normalizedStatus.includes('off market');
+  const isForSale = normalizedStatus.includes('sale');
+  const isForRent = normalizedStatus.includes('rent') && !isRented;
+
+  const statusBadgeConfig = isSold
+    ? { label: 'SOLD', bg: isDark ? '#450a0a' : '#fef2f2', text: isDark ? '#fca5a5' : '#dc2626' }
+    : isRented
+    ? { label: 'RENTED', bg: isDark ? '#2e1065' : '#f5f3ff', text: isDark ? '#d8b4fe' : '#7c3aed' }
+    : isOffer
+    ? { label: 'UNDER OFFER', bg: isDark ? '#451a03' : '#fffbeb', text: isDark ? '#fcd34d' : '#d97706' }
+    : isOffMarket
+    ? { label: 'OFF MARKET', bg: isDark ? '#1e293b' : '#f1f5f9', text: isDark ? '#94a3b8' : '#64748b' }
+    : isForSale
+    ? { label: 'FOR SALE', bg: isDark ? '#14532d' : '#f0fdf4', text: isDark ? '#86efac' : '#16a34a' }
+    : isForRent
+    ? { label: 'FOR RENT', bg: isDark ? '#1e1b4b' : '#eef2ff', text: isDark ? '#a5b4fc' : '#4f46e5' }
+    : listing.listingStatus
+    ? { label: listing.listingStatus.toUpperCase(), bg: isDark ? '#1e293b' : '#f1f5f9', text: isDark ? '#94a3b8' : '#64748b' }
+    : null;
+
   const handleOpenListing = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const siteUrl = process.env.EXPO_PUBLIC_SITE_URL || 'https://deltanhub.com';
-    const propertyUrl = `${siteUrl}/property/${listing.id}`;
+    const propertyUrl = `${siteUrl}/properties/${listing.id}`;
 
     Linking.openURL(propertyUrl).catch(() => {
       Alert.alert(
         listing.title,
-        `Location: ${listing.address || listingMeta || 'Nigeria'}\nRef: ${listing.referenceCode || listing.id}\n\nView complete details and high-res media online at:\n${propertyUrl}`
+        `Status: ${listing.listingStatus || 'Active'}\nLocation: ${listing.address || listingMeta || 'Nigeria'}\nRef: ${listing.referenceCode || listing.id}\n\nView complete details and high-res media online at:\n${propertyUrl}`
       );
     });
   };
@@ -98,9 +122,18 @@ export default function ChatListingBanner({ listing }: ChatListingBannerProps) {
           </View>
 
           <View style={styles.infoCol}>
-            <Text style={[styles.tagText, { color: isDark ? '#f4a5b8' : '#be123c' }]}>
-              LINKED LISTING
-            </Text>
+            <View style={styles.tagRow}>
+              <Text style={[styles.tagText, { color: isDark ? '#f4a5b8' : '#be123c' }]}>
+                LINKED LISTING
+              </Text>
+              {statusBadgeConfig ? (
+                <View style={[styles.statusBadge, { backgroundColor: statusBadgeConfig.bg }]}>
+                  <Text style={[styles.statusBadgeText, { color: statusBadgeConfig.text }]}>
+                    {statusBadgeConfig.label}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Text
               style={[styles.titleText, { color: isDark ? '#ffffff' : '#10243a' }]}
               numberOfLines={1}
@@ -179,6 +212,22 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     justifyContent: 'center',
+  },
+  tagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 9,
+    fontFamily: Typography.fontFamily,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   tagText: {
     fontSize: 10,

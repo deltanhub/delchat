@@ -41,6 +41,7 @@ import LeadCaptureModal from '../../components/chat/LeadCaptureModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
 import ChatToast from '../../components/chat/ChatToast';
 import ChatListingBanner from '../../components/chat/ChatListingBanner';
+import MuteDurationModal from '../../components/chat/MuteDurationModal';
 import MasterLeadSubHeader, { MasterLeadSubTab } from '../../components/chat/crm/MasterLeadSubHeader';
 import MasterLeadDetailsView from '../../components/chat/crm/MasterLeadDetailsView';
 
@@ -78,7 +79,7 @@ const STATUS_PIPELINE = [
  * 5. Media Pipeline: Delegated to `useThreadMedia` inserting into `chat_message_attachments` (e.g. `from('chat_message_attachments').insert`) with cloud storage upload via `uploadLocalFileToSupabaseStorage`.
  */
 export default function ThreadScreen() {
-  const params = useLocalSearchParams<{ id: string; title?: string; partnerName?: string; partnerSubtitle?: string }>();
+  const params = useLocalSearchParams<{ id: string; title?: string; partnerName?: string; partnerSubtitle?: string; listingId?: string }>();
   const conversationId = params.id;
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
@@ -101,6 +102,7 @@ export default function ThreadScreen() {
     partnerNameParam: params.partnerName,
     titleParam: params.title,
     partnerSubtitleParam: initialSubtitle,
+    listingIdParam: params.listingId,
   });
 
   const effectiveSubtitle =
@@ -249,6 +251,7 @@ export default function ThreadScreen() {
           onManageAssignment={() => modals.openModal('assignment')}
           canManageAssignment={Boolean(session.conversation?.canAssignAgents)}
           hasAssignment={Boolean(session.conversation?.assignment)}
+          canReportAgent={Boolean(session.canReportAgent || session.conversation?.assignedAgent || session.conversation?.inquiryId)}
           isGroup={session.conversation?.isGroup || false}
           participantCount={session.conversation?.participantCount}
         />
@@ -572,6 +575,7 @@ export default function ThreadScreen() {
                       media.openMediaViewer(url, kind === 'video' ? 'video' : 'image')
                     }
                     onSendInquiryResponse={messages.handleSendInquiryResponse}
+                    onReportAgent={() => modals.openModal('report')}
                   />
                 )}
                 contentContainerStyle={[
@@ -690,6 +694,11 @@ export default function ThreadScreen() {
           onAddAsLead={() => modals.openModal('lead_capture')}
           onToggleArchive={session.handleToggleArchive}
           onViewStarred={() => modals.openModal('starred')}
+          onReportAgent={
+            Boolean(session.canReportAgent || session.conversation?.assignedAgent || session.conversation?.inquiryId)
+              ? () => modals.openModal('report')
+              : undefined
+          }
         />
 
         {/* Lead Capture Modal (DeltanHub Web LeadCaptureDialog Parity) */}
@@ -741,7 +750,21 @@ export default function ThreadScreen() {
         {/* Report Modal */}
         <ReportModal
           visible={modals.isReportVisible}
-          targetName={session.conversation?.partnerName || 'User'}
+          targetName={
+            session.conversation?.assignedAgent?.fullName ||
+            session.conversation?.assignment?.assignedAgentName ||
+            session.conversation?.partnerName ||
+            'Agent'
+          }
+          agencyName={
+            session.conversation?.agencyName ||
+            session.conversation?.assignment?.agencyName ||
+            null
+          }
+          isAssignedAgentReport={Boolean(
+            session.conversation?.assignedAgent ||
+            session.conversation?.assignment?.assignedAgentUserId
+          )}
           onClose={modals.closeModal}
           onSubmitReport={session.handleSubmitReport}
         />
@@ -878,6 +901,13 @@ export default function ThreadScreen() {
             </View>
           </Pressable>
         </Modal>
+
+        {/* WhatsApp/Telegram-Style Mute Duration Picker */}
+        <MuteDurationModal
+          visible={session.isMuteModalVisible}
+          onClose={session.closeMuteModal}
+          onSelect={session.handleMuteWithDuration}
+        />
       </View>
     </AnimatedPageWrapper>
   );

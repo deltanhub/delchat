@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { messageRepository } from '../../lib/repositories/messageRepository';
@@ -36,6 +36,17 @@ export function useThreadMessages({
   clearPartnerTyping,
   sendTyping,
 }: UseThreadMessagesParams) {
+  const currentUserRef = useRef<any>(currentUser);
+  currentUserRef.current = currentUser;
+  const partnerNameRef = useRef<string | undefined>(partnerName);
+  partnerNameRef.current = partnerName;
+  const partnerUserIdRef = useRef<string | null | undefined>(partnerUserId);
+  partnerUserIdRef.current = partnerUserId;
+  const ensureParticipantAuthorizationRef = useRef(ensureParticipantAuthorization);
+  ensureParticipantAuthorizationRef.current = ensureParticipantAuthorization;
+  const clearPartnerTypingRef = useRef(clearPartnerTyping);
+  clearPartnerTypingRef.current = clearPartnerTyping;
+
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     OfflineEngine.getMessagesSync(conversationId)
   );
@@ -238,7 +249,8 @@ export function useThreadMessages({
 
   // Flush offline pending queue
   const flushPendingQueue = useCallback(async () => {
-    if (!conversationId || !currentUser) return;
+    const user = currentUserRef.current;
+    if (!conversationId || !user) return;
     try {
       await SyncCoordinator.drainOutbox(supabase, conversationId, (tempId, serverData) => {
         setMessages((prev) =>
@@ -259,17 +271,21 @@ export function useThreadMessages({
     } catch (err) {
       console.warn('Error flushing pending queue:', err);
     }
-  }, [conversationId, currentUser, retryPendingMessage]);
+  }, [conversationId, retryPendingMessage]);
+
+  const flushPendingQueueRef = useRef(flushPendingQueue);
+  flushPendingQueueRef.current = flushPendingQueue;
 
   useEffect(() => {
-    if (currentUser && conversationId) {
-      flushPendingQueue();
+    if (currentUser?.id && conversationId) {
+      void flushPendingQueueRef.current();
     }
-  }, [currentUser, conversationId, flushPendingQueue]);
+  }, [currentUser?.id, conversationId]);
 
   // Realtime Messages & Receipts Channel
   useEffect(() => {
-    if (!conversationId || !currentUser) return;
+    const currentUserId = currentUser?.id;
+    if (!conversationId || !currentUserId) return;
 
     const channelName = `chat-thread-realtime-${conversationId}`;
     const existing = supabase.getChannels().find(
@@ -317,7 +333,7 @@ export function useThreadMessages({
             ];
           }
 
-          if (newMsg.sender_user_id === currentUser.id) {
+          if (newMsg.sender_user_id === currentUserId) {
             setMessages((prev) => {
               const alreadyExists = prev.some((m) => m.id === newMsg.id);
               if (alreadyExists) return prev;
@@ -369,7 +385,7 @@ export function useThreadMessages({
           }
 
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          clearPartnerTyping();
+          clearPartnerTypingRef.current();
 
           void supabase.rpc('mark_chat_conversation_read_atomic', {
             p_conversation_id: conversationId,
@@ -379,7 +395,7 @@ export function useThreadMessages({
             id: newMsg.id,
             senderType: newMsg.sender_type || 'user',
             senderUserId: newMsg.sender_user_id,
-            authorName: partnerName || 'Partner',
+            authorName: partnerNameRef.current || 'Partner',
             authorRoleLabel: 'Seller',
             status: 'delivered',
             messageKind: newMsg.message_kind || 'text',
@@ -487,11 +503,11 @@ export function useThreadMessages({
         },
         (payload: any) => {
           const updatedPart = payload.new;
-          if (updatedPart && updatedPart.user_id !== currentUser.id && updatedPart.last_read_at) {
+          if (updatedPart && updatedPart.user_id !== currentUserId && updatedPart.last_read_at) {
             const readTime = new Date(updatedPart.last_read_at).getTime();
             setMessages((prev) =>
               prev.map((m) => {
-                if (m.senderUserId === currentUser.id) {
+                if (m.senderUserId === currentUserId) {
                   const msgTime = new Date(m.sentAt).getTime();
                   if (readTime >= msgTime) {
                     return { ...m, status: 'read' };
@@ -507,7 +523,7 @@ export function useThreadMessages({
         if (status === 'SUBSCRIBED') {
           SyncCoordinator.setStatus('online');
           try {
-            const deltaMsgs = await SyncCoordinator.executeDeltaSync(supabase, conversationId, currentUser?.id);
+            const deltaMsgs = await SyncCoordinator.executeDeltaSync(supabase, conversationId, currentUserId);
             if (deltaMsgs && deltaMsgs.length > 0) {
               setMessages((prev) => {
                 const existingIds = new Set(prev.map((m) => m.id));
@@ -518,7 +534,7 @@ export function useThreadMessages({
           } catch (deltaErr) {
             console.warn('[Realtime] Delta sync deferred:', deltaErr);
           }
-          void flushPendingQueue();
+          void flushPendingQueueRef.current();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           void SyncCoordinator.checkConnectivity();
         }
@@ -527,7 +543,7 @@ export function useThreadMessages({
     return () => {
       void supabase.removeChannel(msgChannel);
     };
-  }, [conversationId, currentUser, partnerName, clearPartnerTyping, flushPendingQueue]);
+  }, [conversationId, currentUser?.id]);
 
   // Send text message
   const handleSendMessage = useCallback(async () => {

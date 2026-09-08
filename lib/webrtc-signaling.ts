@@ -1,7 +1,9 @@
 import { fetchWithAuth } from './api-client';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
-export type ChatCallSignalType = 'offer' | 'answer' | 'ice-candidate' | 'media-state' | 'hangup';
+export type ChatCallSignalType = 'offer' | 'answer' | 'ice-candidate' | 'media-state' | 'hangup' | 'upgrade-to-video' | 'downgrade-to-audio';
+
+
 
 export interface ChatCallSignal {
   id: string;

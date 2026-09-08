@@ -72,9 +72,10 @@ interface AgentCardBubbleProps {
   card: AssignedAgentCardData;
   message: ChatMessage;
   isStarred?: boolean;
+  onReportAgent?: (card: AssignedAgentCardData) => void;
 }
 
-export default function AgentCardBubble({ card, message, isStarred = false }: AgentCardBubbleProps) {
+export default function AgentCardBubble({ card, message, isStarred = false, onReportAgent }: AgentCardBubbleProps) {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
@@ -119,19 +120,42 @@ export default function AgentCardBubble({ card, message, isStarred = false }: Ag
           )}
         </View>
 
-        <Pressable
-          onPress={() => router.push(`/agent/${card.agent.userId}` as Href)}
-          style={({ pressed }) => [
-            styles.agentCardBtn,
-            {
-              borderColor: isDark ? '#3f3f46' : colors.border,
-              opacity: pressed ? 0.9 : 1,
-              transform: [{ scale: pressed ? 0.98 : 1 }],
-            },
-          ]}
-        >
-          <Text style={[styles.agentCardBtnText, { color: colors.text }]}>View Profile</Text>
-        </Pressable>
+        <View style={styles.agentCardBtnRow}>
+          <Pressable
+            onPress={() => router.push(`/agent/${card.agent.userId}` as Href)}
+            style={({ pressed }) => [
+              styles.agentCardBtn,
+              {
+                flex: onReportAgent ? 1 : undefined,
+                borderColor: isDark ? '#3f3f46' : colors.border,
+                opacity: pressed ? 0.9 : 1,
+                transform: [{ scale: pressed ? 0.98 : 1 }],
+              },
+            ]}
+          >
+            <Text style={[styles.agentCardBtnText, { color: colors.text }]}>View Profile</Text>
+          </Pressable>
+
+          {onReportAgent && (
+            <Pressable
+              onPress={() => onReportAgent(card)}
+              style={({ pressed }) => [
+                styles.agentCardReportBtn,
+                {
+                  borderColor: isDark ? '#3d1624' : '#fecaca',
+                  backgroundColor: isDark ? '#261219' : '#fff5f5',
+                  opacity: pressed ? 0.85 : 1,
+                  transform: [{ scale: pressed ? 0.98 : 1 }],
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Report agent"
+            >
+              <Ionicons name="flag-outline" size={13} color="#ef4444" style={{ marginRight: 4 }} />
+              <Text style={styles.agentCardReportBtnText}>Report</Text>
+            </Pressable>
+          )}
+        </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 3 }}>
           {isStarred && (
@@ -207,20 +231,42 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontFamily: Typography.fontFamily,
   },
-  agentCardBtn: {
+  agentCardBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 16,
+  },
+  agentCardBtn: {
     height: 40,
     borderRadius: 20,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
+    paddingHorizontal: 16,
   },
   agentCardBtnText: {
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  agentCardReportBtn: {
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  agentCardReportBtnText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   agentCardTime: {
     fontSize: 10,

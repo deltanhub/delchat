@@ -111,17 +111,27 @@ const offlineEnginePath = path.join(DELCHAT_DIR, 'lib', 'offline-engine.ts');
 const offlineEngineContent = fs.readFileSync(offlineEnginePath, 'utf8');
 assert(offlineEngineContent.includes('getMessagesSync'), 'OfflineEngine exports getMessagesSync for 0ms Frame 1 hydration');
 assert(offlineEngineContent.includes('saveSingleMessage'), 'OfflineEngine exports saveSingleMessage for immediate realtime persistence');
+assert(offlineEngineContent.includes('getConversationSync'), 'OfflineEngine exports getConversationSync for 0ms conversation & listing hydration');
 
 const useThreadMsgsPath = path.join(DELCHAT_DIR, 'hooks', 'thread', 'useThreadMessages.ts');
 const useThreadMsgsContent = fs.readFileSync(useThreadMsgsPath, 'utf8');
 assert(useThreadMsgsContent.includes('OfflineEngine.getMessagesSync(conversationId)'), 'useThreadMessages hydrates state synchronously from OfflineEngine hot cache');
 assert(useThreadMsgsContent.includes('OfflineEngine.saveSingleMessage(conversationId'), 'useThreadMessages persists realtime incoming and outgoing messages');
 
+const useThreadSessionPath = path.join(DELCHAT_DIR, 'hooks', 'thread', 'useThreadSession.ts');
+const useThreadSessionContent = fs.readFileSync(useThreadSessionPath, 'utf8');
+assert(useThreadSessionContent.includes('OfflineEngine.getConversationSync(conversationId)'), 'useThreadSession hydrates state synchronously from OfflineEngine hot cache');
+assert(useThreadSessionContent.includes('void fetchConversationDetails(user)'), 'useThreadSession triggers fetchConversationDetails on mount');
+
 const threadScreenPath = path.join(DELCHAT_DIR, 'app', 'thread', '[id].tsx');
 const threadScreenContent = fs.readFileSync(threadScreenPath, 'utf8');
 assert(
   threadScreenContent.includes('messages.loadingMessages && messages.messages.length === 0'),
   'ThreadScreen strictly guards full-screen loader to zero-message cold starts (0ms instant paint for cached chats)'
+);
+assert(
+  threadScreenContent.includes('<ChatListingBanner listing={session.conversation.listing} />'),
+  'ThreadScreen mounts ChatListingBanner for linked property listings'
 );
 
 // 6. Presentation Layer Decoupling Verification

@@ -617,6 +617,7 @@ export const callRepository = {
     callId: string,
     updates: {
       callStatus?: string;
+      callMode?: string;
       endedAt?: string;
       endedByUserId?: string;
       endReason?: string;
@@ -626,6 +627,7 @@ export const callRepository = {
   ): Promise<void> {
     const payload: Record<string, any> = {};
     if (updates.callStatus) payload.call_status = updates.callStatus;
+    if (updates.callMode) payload.call_mode = updates.callMode;
     if (updates.endedAt) payload.ended_at = updates.endedAt;
     if (updates.endedByUserId) payload.ended_by_user_id = updates.endedByUserId;
     if (updates.endReason) payload.end_reason = updates.endReason;

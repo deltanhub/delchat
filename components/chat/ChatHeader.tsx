@@ -33,6 +33,7 @@ interface ChatHeaderProps {
   isBlocked?: boolean;
   hasAssignment?: boolean;
   canManageAssignment?: boolean;
+  canReportAgent?: boolean;
   isGroup?: boolean;
   participantCount?: number;
   participantNames?: string[];
@@ -64,6 +65,7 @@ export default function ChatHeader({
   isBlocked = false,
   hasAssignment = false,
   canManageAssignment = false,
+  canReportAgent = false,
   isGroup = false,
   participantCount,
   participantNames,
@@ -293,7 +295,7 @@ export default function ChatHeader({
               </Pressable>
             )}
 
-            {hasAssignment && onReportAgent && (
+            {Boolean((hasAssignment || canReportAgent) && onReportAgent) && (
               <Pressable style={[styles.menuItem, { borderBottomColor: isDark ? '#262626' : 'rgba(0,0,0,0.05)' }]} onPress={() => handleMenuOption(onReportAgent)}>
                 <Ionicons name="flag-outline" size={17} color="#ef4444" style={styles.menuIcon} />
                 <Text style={[styles.menuItemText, { color: '#ef4444' }]}>Report Agent</Text>

@@ -307,7 +307,8 @@ export default function StarredMessagesModal({
           {conversationId && (
             <View style={[styles.scopeContainer, { borderBottomColor: colors.border, backgroundColor: isDark ? '#1a1a1a' : '#f8fafc' }]}>
               <View style={[styles.scopeToggle, { backgroundColor: isDark ? '#262626' : '#e2e8f0' }]}>
-                <ScalePressable
+                <TouchableOpacity
+                  activeOpacity={0.7}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     setScope('current');
@@ -316,22 +317,31 @@ export default function StarredMessagesModal({
                     styles.scopeButton,
                     scope === 'current' && [
                       styles.scopeButtonActive,
-                      { backgroundColor: colors.card },
+                      {
+                        backgroundColor: isDark ? '#4a0f1f' : colors.card,
+                        borderColor: isDark ? '#6e1a30' : 'transparent',
+                        borderWidth: isDark ? 1 : 0,
+                      },
                     ],
                   ]}
                 >
                   <Text
                     style={[
                       styles.scopeText,
-                      { color: scope === 'current' ? colors.primary : colors.placeholder },
-                      scope === 'current' && { fontWeight: '700' },
+                      {
+                        color: scope === 'current'
+                          ? (isDark ? '#ffffff' : colors.primary)
+                          : (isDark ? '#e2e8f0' : colors.placeholder),
+                        fontWeight: scope === 'current' ? '700' : '500',
+                      },
                     ]}
                   >
                     In this chat
                   </Text>
-                </ScalePressable>
+                </TouchableOpacity>
 
-                <ScalePressable
+                <TouchableOpacity
+                  activeOpacity={0.7}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     setScope('all');
@@ -340,20 +350,28 @@ export default function StarredMessagesModal({
                     styles.scopeButton,
                     scope === 'all' && [
                       styles.scopeButtonActive,
-                      { backgroundColor: colors.card },
+                      {
+                        backgroundColor: isDark ? '#4a0f1f' : colors.card,
+                        borderColor: isDark ? '#6e1a30' : 'transparent',
+                        borderWidth: isDark ? 1 : 0,
+                      },
                     ],
                   ]}
                 >
                   <Text
                     style={[
                       styles.scopeText,
-                      { color: scope === 'all' ? colors.primary : colors.placeholder },
-                      scope === 'all' && { fontWeight: '700' },
+                      {
+                        color: scope === 'all'
+                          ? (isDark ? '#ffffff' : colors.primary)
+                          : (isDark ? '#e2e8f0' : colors.placeholder),
+                        fontWeight: scope === 'all' ? '700' : '500',
+                      },
                     ]}
                   >
                     All chats
                   </Text>
-                </ScalePressable>
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -626,7 +644,8 @@ const styles = StyleSheet.create({
   },
   scopeButton: {
     flex: 1,
-    paddingVertical: 7,
+    paddingVertical: 8,
+    minHeight: 36,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -646,7 +665,7 @@ const styles = StyleSheet.create({
   },
   scopeText: {
     fontSize: 13,
-    fontWeight: '500',
+    textAlign: 'center',
   },
   searchContainer: {
     paddingHorizontal: 20,

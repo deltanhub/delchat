@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.deltanhub.delchat",
+      "buildNumber": "1",
       "entitlements": {
         "aps-environment": "production"
       },
@@ -114,7 +115,14 @@
           "sounds": []
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "DelChat requires camera access to allow you to make video calls and capture photo attachments for properties and messages.",
+          "microphonePermission": "DelChat requires microphone access to enable high-definition voice calls and voice notes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

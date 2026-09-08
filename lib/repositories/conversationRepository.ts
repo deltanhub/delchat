@@ -3,6 +3,9 @@ import { resolveAvatarUrl, resolveListingImageUrl } from '../media-utils';
 import { canAssignAgents, canReceiveLeads, isAgent, AppProfile } from '../auth';
 import type { ChatConversation } from '../../components/chat/ConversationRow';
 
+/** WhatsApp/Telegram-style mute durations */
+export type MuteDuration = '8h' | '1w' | 'always' | 'unmute';
+
 export interface FetchInboxOptions {
   maxMsgLimit?: number;
 }
@@ -349,6 +352,21 @@ export const conversationRepository = {
           }
         : null;
 
+      const resolvedAgent = (inq?.assigned_agent_user_id || effectiveAgentUserId)
+        ? {
+            userId: (inq?.assigned_agent_user_id || effectiveAgentUserId) as string,
+            fullName: assignedAgentName || 'Assigned Agent',
+            avatarUrl: assignedAgentAvatar,
+          }
+        : null;
+
+      const agencyUserId = inq?.company_user_id || inq?.agency_user_id || c.agency_user_id || null;
+      const agencyProfile = agencyUserId ? profileMap.get(agencyUserId) : null;
+      const agencyName =
+        agencyProfile?.display_name?.trim() ||
+        agencyProfile?.full_name?.trim() ||
+        null;
+
       const isGroup = c.conversation_kind === 'group';
 
       return {
@@ -375,6 +393,9 @@ export const conversationRepository = {
         clearedHistoryAt: part?.cleared_history_at || null,
         listing: listingObj,
         assignment: assignmentObj,
+        inquiryId: inq?.id || null,
+        agencyName,
+        assignedAgent: resolvedAgent,
         canAssignAgents: canAssignAgentsInThread,
       };
     });
@@ -444,16 +465,31 @@ export const conversationRepository = {
   },
 
   /**
-   * Toggle muted state for a conversation.
+   * Toggle muted state for a conversation with WhatsApp/Telegram-style duration support.
    */
   async toggleConversationMute(
     conversationId: string,
     currentUserId: string,
-    willMute: boolean
+    willMute: boolean,
+    duration?: MuteDuration
   ): Promise<void> {
-    const muteUntil = willMute
-      ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
-      : null;
+    let muteUntil: string | null = null;
+
+    if (willMute) {
+      const effectiveDuration = duration || 'always';
+      switch (effectiveDuration) {
+        case '8h':
+          muteUntil = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
+          break;
+        case '1w':
+          muteUntil = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+          break;
+        case 'always':
+        default:
+          muteUntil = '9999-12-31T23:59:59.000Z';
+          break;
+      }
+    }
 
     const { error } = await supabase
       .from('chat_participants')

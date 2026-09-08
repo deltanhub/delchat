@@ -171,8 +171,9 @@ assert(recentCallsContent.includes('callRepository.groupCallLogs'), 'RecentCalls
 assert(recentCallsContent.includes('handleRedial'), 'RecentCallsList provides one-tap audio and video redial');
 assert(recentCallsContent.includes('filter: `user_id=eq.${currentUserId}`'), 'RecentCallsList strictly filters CDC to prevent DoS');
 
-const inboxContent = fs.readFileSync(path.join(DELCHAT_DIR, 'app', '(tabs)', 'index.tsx'), 'utf8');
-assert(inboxContent.includes("key: 'calls'") && inboxContent.includes('<RecentCallsList'), 'Inbox screen integrates dedicated Calls tab');
+const callsScreenPath = path.join(DELCHAT_DIR, 'app', '(tabs)', 'calls.tsx');
+const callsScreenContent = fs.readFileSync(callsScreenPath, 'utf8');
+assert(callsScreenContent.includes('<RecentCallsList'), 'Dedicated Calls screen integrates RecentCallsList');
 
 console.log('\n================================================================');
 console.log(`  CALL VERIFICATION RESULTS: ${passed} PASSED / ${failed} FAILED (Total: ${total})`);

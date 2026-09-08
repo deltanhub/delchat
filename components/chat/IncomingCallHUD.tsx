@@ -23,6 +23,7 @@ import Animated, {
 import { supabase } from '../../lib/supabase';
 import * as Haptics from '../../lib/haptics';
 import { resolveAvatarUrl } from '../../lib/media-utils';
+import { callRingtoneService } from '../../lib/voip/callRingtoneService';
 import SafeBlurView from '../SafeBlurView';
 import ScalePressable from '../ScalePressable';
 
@@ -62,11 +63,13 @@ export default function IncomingCallHUD() {
     });
 
     return () => {
+      void callRingtoneService.stopAllRingtones();
       subscription.unsubscribe();
     };
   }, []);
 
   const dismissHUD = useCallback(() => {
+    void callRingtoneService.stopAllRingtones();
     if (hapticIntervalRef.current) {
       clearInterval(hapticIntervalRef.current);
       hapticIntervalRef.current = null;
@@ -174,6 +177,7 @@ export default function IncomingCallHUD() {
       }
 
       setIncomingCall(callData);
+      void callRingtoneService.playIncomingRingtone();
 
       translateY.value = withSpring(0, {
         mass: 1,

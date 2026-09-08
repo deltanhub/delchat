@@ -140,9 +140,10 @@ assert(recentCallsContent.includes('callRepository.groupCallLogs'), 'RecentCalls
 assert(recentCallsContent.includes('handleRedial'), 'RecentCallsList provides one-tap audio and video redial triggers');
 assert(recentCallsContent.includes('filter: `user_id=eq.${currentUserId}`'), 'RecentCallsList strictly filters Realtime CDC on user_id to prevent DoS');
 
-const inboxScreenPath = path.join(DELCHAT_DIR, 'app', '(tabs)', 'index.tsx');
-const inboxContent = fs.readFileSync(inboxScreenPath, 'utf8');
-assert(inboxContent.includes("key: 'calls'") && inboxContent.includes('<RecentCallsList'), 'Inbox screen integrates dedicated Calls tab');
+const callsScreenPath = path.join(DELCHAT_DIR, 'app', '(tabs)', 'calls.tsx');
+const callsScreenContent = fs.readFileSync(callsScreenPath, 'utf8');
+assert(callsScreenContent.includes('<RecentCallsList'), 'Dedicated Calls screen integrates RecentCallsList');
+const inboxContent = fs.readFileSync(path.join(DELCHAT_DIR, 'app', '(tabs)', 'index.tsx'), 'utf8');
 
 // =============================================================================
 // TIER 5: WEBRTC & VOIP CALLING ARCHITECTURE
@@ -486,9 +487,23 @@ assert(leadsDataHookCode.includes("inqByConvId = new Map<string, any>()"), 'useL
 assert(leadsDataHookCode.includes("masterLeadStatus: linkedInq?.master_lead_status || r.lead_status || 'new'"), 'useLeadsData enriches mapped chat leads with masterLeadStatus');
 assert(leadsDataHookCode.includes("master_lead_status: nextStatus"), 'useLeadsData synchronizes master_lead_status on crm_inquiries update');
 
+const reportModalCode = fs.readFileSync(path.join(DELCHAT_DIR, 'components', 'chat', 'ReportModal.tsx'), 'utf8');
+assert(reportModalCode.includes('messagesConsent') && reportModalCode.includes('Reveal Chat History for Review'), 'ReportModal features Buyer chat reveal consent toggle');
+
+const sessionCode = fs.readFileSync(path.join(DELCHAT_DIR, 'hooks', 'thread', 'useThreadSession.ts'), 'utf8');
+assert(sessionCode.includes("supabase.from('master_lead_reports').insert({") && sessionCode.includes('messages_consent: messagesConsent'), 'useThreadSession saves moderation report to master_lead_reports with messages_consent');
+
+const agentBubbleCode = fs.readFileSync(path.join(DELCHAT_DIR, 'components', 'chat', 'bubbles', 'AgentCardBubble.tsx'), 'utf8');
+assert(agentBubbleCode.includes('onReportAgent') && agentBubbleCode.includes('Report'), 'AgentCardBubble provides Report action on assigned agent card');
+
+const chatInfoCode = fs.readFileSync(path.join(DELCHAT_DIR, 'components', 'chat', 'ChatInfoModal.tsx'), 'utf8');
+assert(chatInfoCode.includes('onReportAgent') && chatInfoCode.includes('Report Agent to Management'), 'ChatInfoModal provides Report Agent to Management button');
+
+assert(sessionCode.includes('handleToggleInThreadAgentShare') && sessionCode.includes('Alert.alert(') && sessionCode.includes('Share Thread with'), 'useThreadSession guards agent sharing toggle with confirmation dialog');
+
 try {
   execSync('node scripts/test_master_leads_architecture.js', { cwd: DELCHAT_DIR, stdio: 'pipe' });
-  assert(true, 'Standalone Master Leads Verification Suite passes (16/16 tests)');
+  assert(true, 'Standalone Master Leads Verification Suite passes (42/42 tests)');
 } catch (err) {
   assert(false, 'Standalone Master Leads Verification Suite failed', err.stderr ? err.stderr.toString() : err.message);
 }

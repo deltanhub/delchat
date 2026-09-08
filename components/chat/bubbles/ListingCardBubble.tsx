@@ -56,7 +56,7 @@ export default function ListingCardBubble({ message, isCurrentUser, isStarred = 
           <Pressable
             onPress={() => {
               const siteUrl = process.env.EXPO_PUBLIC_SITE_URL || 'https://deltanhub.com';
-              const propertyUrl = `${siteUrl}/property/${listing.id}`;
+              const propertyUrl = `${siteUrl}/properties/${listing.id}`;
               Linking.openURL(propertyUrl).catch(() => {
                 Alert.alert(
                   listing.title || 'Listing Details',

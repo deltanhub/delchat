@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
@@ -18,6 +18,7 @@ export default function ConnectionBanner({ statusOverride }: ConnectionBannerPro
 
   const [status, setStatus] = useState<SyncStatus>(statusOverride || SyncCoordinator.getStatus());
   const [showConnectedTemporary, setShowConnectedTemporary] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (statusOverride) {
@@ -25,16 +26,35 @@ export default function ConnectionBanner({ statusOverride }: ConnectionBannerPro
       return;
     }
 
-    return SyncCoordinator.subscribe((newStatus) => {
+    const unsubscribe = SyncCoordinator.subscribe((newStatus) => {
       setStatus((prev) => {
-        if ((prev === 'offline' || prev === 'syncing') && newStatus === 'online') {
+        if (prev === newStatus) return prev;
+        if (prev === 'offline' && newStatus === 'online') {
           // Show "Connected" pill temporarily for 2.5 seconds
+          if (timerRef.current) clearTimeout(timerRef.current);
           setShowConnectedTemporary(true);
-          setTimeout(() => setShowConnectedTemporary(false), 2500);
+          timerRef.current = setTimeout(() => {
+            setShowConnectedTemporary(false);
+            timerRef.current = null;
+          }, 2500);
+        } else if (newStatus !== 'online') {
+          if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+          }
+          setShowConnectedTemporary(false);
         }
         return newStatus;
       });
     });
+
+    return () => {
+      unsubscribe();
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [statusOverride]);
 
   if (status === 'online' && !showConnectedTemporary) {

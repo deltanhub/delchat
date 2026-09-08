@@ -9,6 +9,7 @@ import {
   ScrollView,
   Pressable,
   Linking,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
@@ -25,6 +26,7 @@ interface ChatInfoModalProps {
   onAddAsLead: () => void;
   onToggleArchive: () => void;
   onViewStarred?: () => void;
+  onReportAgent?: () => void;
 }
 
 export const ChatInfoModal: React.FC<ChatInfoModalProps> = ({
@@ -35,6 +37,7 @@ export const ChatInfoModal: React.FC<ChatInfoModalProps> = ({
   onAddAsLead,
   onToggleArchive,
   onViewStarred,
+  onReportAgent,
 }) => {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
@@ -119,8 +122,12 @@ export const ChatInfoModal: React.FC<ChatInfoModalProps> = ({
                   onPress={() => {
                     onClose();
                     const siteUrl = process.env.EXPO_PUBLIC_SITE_URL || 'https://deltanhub.com';
-                    Linking.openURL(`${siteUrl}/property/${conversation.listing!.id}`).catch(() => {
-                      router.push(`/property/${conversation.listing!.id}` as Href);
+                    const propertyUrl = `${siteUrl}/properties/${conversation.listing!.id}`;
+                    Linking.openURL(propertyUrl).catch(() => {
+                      Alert.alert(
+                        conversation.listing!.title,
+                        `Location: ${conversation.listing!.address || 'Nigeria'}\n\nView details online at:\n${propertyUrl}`
+                      );
                     });
                   }}
                   style={[styles.propertyRow, { borderColor: colors.border }]}
@@ -209,6 +216,27 @@ export const ChatInfoModal: React.FC<ChatInfoModalProps> = ({
                   {conversation.isArchived ? 'Unarchive Conversation' : 'Archive Conversation'}
                 </Text>
               </TouchableOpacity>
+
+              {onReportAgent && (
+                <TouchableOpacity
+                  onPress={() => {
+                    onClose();
+                    onReportAgent();
+                  }}
+                  style={[
+                    styles.actionBtn,
+                    {
+                      backgroundColor: isDark ? '#261219' : '#fff5f5',
+                      borderColor: isDark ? '#3d1624' : '#fecaca',
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Report Agent to Management"
+                >
+                  <Ionicons name="flag-outline" size={20} color="#ef4444" style={{ marginRight: 8 }} />
+                  <Text style={[styles.actionBtnText, { color: '#ef4444' }]}>Report Agent to Management</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </ScrollView>
         </View>

@@ -526,8 +526,63 @@ node scripts/run_comprehensive_audit.js
     - `node scripts/test_presence_sync.js` --> **ALL TESTS PASSED (100%)**.
     - `node scripts/test_role_permissions.js` --> **10 PASSED / 0 FAILED (100% Pass Rate)**.
     - `node scripts/run_master_system_audit.js` --> **136 PASSED / 0 FAILED (100% Pass Rate)**.
+- **Phase 11 Detailed Execution Log: Manage Assignment Modal Roster Partitioning & Ergonomics (Completed 2026-09-08)**:
+  - **What Was Done**:
+    - `lib/repositories/leadsRepository.ts`:
+      - Updated `BrokerageAgent` interface with `agentType?: 'internal' | 'external'` and `positionTitle?: string | null`.
+      - In `fetchBrokerageAgents`: queried `relationship_kind` and `position_title` from `agency_agent_memberships` and `developer_agent_memberships`.
+      - Excluded the logged-in Agency account (`currentUserId`) and organization tenant IDs from `candidateUserIds`, preventing the agency itself from appearing as an assignable candidate.
+      - Mapped `agentType` (`'internal' | 'external'`) and `positionTitle` onto each candidate agent.
+    - `components/chat/ManageAssignmentModal.tsx`:
+      - Added state `activeTab: 'internal' | 'external'` and memoized partition of `internalAgents` and `externalAgents`.
+      - Added a two-column clickable segmented switcher:
+        - **Column 1: Internal Agents** (with live count badge & subtitle "In-house Team")
+        - **Column 2: External Agents** (with live count badge & subtitle "Co-broker & Network")
+      - Attached color-coded badges (`INTERNAL` / `EXTERNAL`) directly on each agent card.
+      - Set standard bottom-sheet proportions: `height: Math.min(SCREEN_HEIGHT * 0.82, 720)` with `flex: 1` on `listWrapper` and `agentList`, eliminating the crushed sheet appearance.
+      - Redesigned the unselected button state with high-visibility soft wine styling, person-add icon, and explicit text: `Select an Agent to Assign`, which transitions smoothly to active wine `#4a0f1f` on agent selection.
+      - Added safe-area padding: `paddingBottom: Math.max(insets.bottom, 16) + 6`.
+  - **Why It Was Done**:
+    - The Agency account was previously returned by `get_public_user_profiles` because `tenantIdArray` was seeded into `candidateUserIds`. An agency is the firm delegating leads, NOT a subordinate agent.
+    - The modal lacked column separation between in-house brokerage agents and external partners.
+    - The modal lacked a fixed height, causing it to collapse to ~400px when only 1 or 2 agents were in the roster, leaving >50% empty space above and pushing the footer against the home bar.
+    - The unselected action button rendered as an unclickable dark gray bar (`#262626`) on black, creating user confusion about what the button was.
+  - **Smoke Test Results & Proof**:
+    - `cmd /c npx tsc --noEmit` --> Exited with code `0` (Zero TypeScript compiler errors).
+    - `node scripts/run_comprehensive_audit.js` --> **62 PASSED / 0 FAILED (100% Pass Rate)**.
+    - `node scripts/test_clean_architecture.js` --> **64 PASSED / 0 FAILED (100% Pass Rate)**.
+    - `node scripts/test_presence_sync.js` --> **ALL TESTS PASSED (100%)**.
+    - `node scripts/test_role_permissions.js` --> **10 PASSED / 0 FAILED (100% Pass Rate)**.
+    - `node scripts/test_master_leads_architecture.js` --> **31 PASSED / 0 FAILED (100% Pass Rate)**.
+    - `node scripts/run_master_system_audit.js` --> **136 PASSED / 0 FAILED (100% Pass Rate)**.
+- **Phase 12 Detailed Execution Log: Inbox Filter Bar Redundant Calls Removal & Dark Mode High-Contrast White Text Typography (Completed 2026-09-08)**:
+  - **What Was Done**:
+    - `app/(tabs)/index.tsx`:
+      - Removed `{ key: 'calls', label: 'Calls' }` from `inboxTabs`. The horizontal filter bar in Messages now displays cleanly as `All`, `Master Leads` / `Assigned Leads` / `Inquiries`, `Favourites`, and `Support`, removing the redundant Calls filter.
+      - Updated active filter tab styling:
+        - Active background in dark mode: `#4a0f1f` (DeltanHub signature wine brand color) with border `#6e1a30`.
+        - Active text in dark mode: `#ffffff` (crisp pure white, bold `700`). In dark mode, active tabs previously displayed dark wine `#4a0f1f` text on a dark background, rendering "Master Leads" illegible.
+      - Updated inactive filter tab styling:
+        - In dark mode, all inactive tabs (`All`, `Favourites`, `Support`, etc.) now render with clean, high-contrast `#ffffff` text (font weight `500`), eradicating dim, muddy gray tones.
+      - Updated `Unread` filter toggle pill:
+        - When active: `#4a0f1f` background with `#ffffff` text.
+        - When inactive on dark mode: `#ffffff` text with a subtle border `rgba(255, 255, 255, 0.3)`.
+    - `scripts/test_call_functionality.js` & `scripts/run_master_system_audit.js`:
+      - Updated test assertions to verify that the dedicated Calls tab screen (`app/(tabs)/calls.tsx`) integrates `<RecentCallsList`, accurately reflecting DelChat's multi-tab bottom navigation architecture.
+  - **Why It Was Done**:
+    - Users observed that `Calls` was situated directly between `All` and `Master Leads` in the Messages inbox header even though Calls already exists as its own dedicated bottom navigation tab.
+    - On OLED dark mode, active and inactive filter pill texts were dark maroon or dim gray, causing severe legibility issues.
+  - **Smoke Test Results & Proof**:
+    - `cmd /c npx tsc --noEmit` --> Exited with code `0` (Zero errors).
+    - `node scripts/run_comprehensive_audit.js` --> **62 PASSED / 0 FAILED (100%)**.
+    - `node scripts/test_clean_architecture.js` --> **64 PASSED / 0 FAILED (100%)**.
+    - `node scripts/test_presence_sync.js` --> **ALL TESTS PASSED (100%)**.
+    - `node scripts/test_role_permissions.js` --> **10 PASSED / 0 FAILED (100%)**.
+    - `node scripts/test_master_leads_architecture.js` --> **31 PASSED / 0 FAILED (100%)**.
+    - `node scripts/test_call_functionality.js` --> **49 PASSED / 0 FAILED (100%)**.
+    - `node scripts/run_master_system_audit.js` --> **136 PASSED / 0 FAILED (100%)**.
   - **What Is Left To Be Done (Immediate Next Steps)**:
-    - All 10 Clean Architecture, CRM modularization, and local-first data access phases are **100% COMPLETED and VERIFIED**.
+    - All Clean Architecture, CRM modularization, and local-first data access phases are **100% COMPLETED and VERIFIED**.
     - Production cloud compilation / EAS builds (`eas build -p android --profile production` / `eas build -p ios --profile production`) when deployment credentials are ready.
 
 ---

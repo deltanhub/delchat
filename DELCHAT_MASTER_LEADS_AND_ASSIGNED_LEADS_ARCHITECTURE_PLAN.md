@@ -311,8 +311,146 @@ Check the "What Is Left To Be Done" section in `DELCHAT_MASTER_LEADS_AND_ASSIGNE
   - `node scripts/test_presence_sync.js` &rarr; **100% passed**
   - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
 
+### Phase 9: Manage Assignment Modal Roster Partitioning & Ergonomics (Completed)
+- **Date**: 2026-09-08
+- **Files Modified**:
+  - `lib/repositories/leadsRepository.ts` (Lines 6-13, 85-135):
+    - Added `agentType?: 'internal' | 'external'` and `positionTitle?: string | null` to `BrokerageAgent` interface.
+    - Queried `relationship_kind` and `position_title` from `agency_agent_memberships` and `developer_agent_memberships`.
+    - Excluded the logged-in Agency account (`currentUserId`) and organization tenant IDs from `candidateUserIds`, preventing the agency itself from appearing as an assignable candidate.
+    - Mapped `agentType` (`'internal' | 'external'`) and `positionTitle` onto each candidate agent.
+  - `components/chat/ManageAssignmentModal.tsx`:
+    - Added two-column clickable segmented switcher:
+      - **Column 1: Internal Agents** (with live count badge & subtitle "In-house Team")
+      - **Column 2: External Agents** (with live count badge & subtitle "Co-broker & Network")
+    - Attached color-coded badges (`INTERNAL` / `EXTERNAL`) directly on each agent card.
+    - Set standard bottom-sheet proportions: `height: Math.min(SCREEN_HEIGHT * 0.82, 720)` with `flex: 1` on `listWrapper` and `agentList`, eliminating the crushed sheet appearance.
+    - Redesigned the unselected button state with high-visibility soft wine styling, person-add icon, and explicit text: `Select an Agent to Assign`, which transitions smoothly to active wine `#4a0f1f` on agent selection.
+    - Added safe-area padding: `paddingBottom: Math.max(insets.bottom, 16) + 6`.
+- **Senior Engineer Live Smoke Test Evidence**:
+  - `cmd /c npx tsc --noEmit` &rarr; **Exit Code 0 (0 errors)**
+  - `node scripts/test_master_leads_architecture.js` &rarr; **31/31 tests passed (100%)**
+  - `node scripts/run_master_system_audit.js` &rarr; **136/136 tests passed (100%)**
+  - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+  - `node scripts/test_clean_architecture.js` &rarr; **64/64 tests passed (100%)**
+  - `node scripts/test_presence_sync.js` &rarr; **100% passed**
+  - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
+
+### Phase 10: Inbox Filter Bar Redundant Calls Removal & Dark Mode White Text Typography (Completed)
+- **Date**: 2026-09-08
+- **Files Modified**:
+  - `app/(tabs)/index.tsx`:
+    - Removed `{ key: 'calls', label: 'Calls' }` from `inboxTabs`. The horizontal filter bar in Messages now displays cleanly as `All`, `Master Leads` / `Assigned Leads` / `Inquiries`, `Favourites`, and `Support`, removing the redundant Calls filter.
+    - Updated active filter tab styling:
+      - Active background in dark mode: `#4a0f1f` (DeltanHub signature wine brand color) with border `#6e1a30`.
+      - Active text in dark mode: `#ffffff` (crisp pure white, bold `700`). In dark mode, active tabs previously displayed dark wine `#4a0f1f` text on a dark background, rendering "Master Leads" illegible.
+    - Updated inactive filter tab styling:
+      - In dark mode, all inactive tabs (`All`, `Favourites`, `Support`, etc.) now render with clean, high-contrast `#ffffff` text (font weight `500`), eradicating dim, muddy gray tones.
+    - Updated `Unread` filter toggle pill:
+      - When active: `#4a0f1f` background with `#ffffff` text.
+      - When inactive on dark mode: `#ffffff` text with a subtle border `rgba(255, 255, 255, 0.3)`.
+  - `scripts/test_call_functionality.js` & `scripts/run_master_system_audit.js`:
+    - Updated test assertions to verify that the dedicated Calls tab screen (`app/(tabs)/calls.tsx`) integrates `<RecentCallsList`, accurately reflecting DelChat's multi-tab bottom navigation architecture.
+- **Senior Engineer Live Smoke Test Evidence**:
+  - `cmd /c npx tsc --noEmit` &rarr; **Exit Code 0 (0 errors)**
+  - `node scripts/test_master_leads_architecture.js` &rarr; **31/31 tests passed (100%)**
+  - `node scripts/test_call_functionality.js` &rarr; **49/49 tests passed (100%)**
+  - `node scripts/run_master_system_audit.js` &rarr; **136/136 tests passed (100%)**
+  - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+  - `node scripts/test_clean_architecture.js` &rarr; **64/64 tests passed (100%)**
+  - `node scripts/test_presence_sync.js` &rarr; **100% passed**
+  - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
+
+### Phase 11: Buyer Agent Reporting & Chat Reveal Consent Architecture (Completed)
+- **Date**: 2026-09-08
+- **Files Modified**:
+  - `components/chat/ConversationRow.tsx`:
+    - Added `inquiryId?: string | null;`, `agencyName?: string | null;`, `assignedAgent?: { userId: string; fullName: string; avatarUrl: string | null } | null;` and `agencyName?: string | null;` under `assignment`.
+  - `lib/repositories/conversationRepository.ts`:
+    - Safely mapped `inquiryId`, `agencyName`, and `assignedAgent` to the conversation entity while maintaining strict Buyer CRM lead isolation (`isViewerProfessional && hasAssignedAgent`).
+  - `components/chat/ReportModal.tsx`:
+    - Redesigned reporting interface with `agencyName`, `isAssignedAgentReport`, and interactive `messagesConsent` state.
+    - Added high-visibility switch card: *"Reveal Chat History for Review"* with dynamic contextual guidance informing the buyer whether company management will be authorized to read messages.
+    - Updated submit signature to pass `messagesConsent` boolean.
+  - `hooks/thread/useThreadSession.ts`:
+    - Resolved `assignedAgent`, `effectiveAgencyUserId`, and `resolvedAgencyName`; surfaced `canReportAgent`.
+    - Rewrote `handleSubmitReport` to insert directly into Supabase `public.master_lead_reports` (`inquiry_id`, `reporter_user_id`, `reason`, `details`, `messages_consent`, `messages_consent_at`, `report_status: 'pending'`).
+    - Provided fallbacks to `/api/chats/report` and `chat_reports`.
+    - Displayed detailed toast notifications informing the buyer whether chat history was revealed or kept private.
+  - `components/chat/bubbles/AgentCardBubble.tsx` & `components/chat/bubbles/types.ts`:
+    - Added inline "Report" button with red flag icon to the introduced agent card, featuring tactile Apple-style press physics.
+  - `components/chat/ChatHeader.tsx` & `components/chat/ChatInfoModal.tsx`:
+    - Added `canReportAgent` and `onReportAgent` entrypoints in header 3-dots menu and chat info drawer.
+  - `app/thread/[id].tsx`:
+    - Wired `onReportAgent` to trigger `<ReportModal />` with target agent details and agency context.
+  - `scripts/test_master_leads_architecture.js` & `scripts/run_master_system_audit.js`:
+    - Added **Suite 9: Buyer Agent Reporting & Chat Reveal Consent Audit** (36/36 tests pass).
+    - Added verification checks to Tier 12 in master system audit (140/140 tests pass).
+- **Senior Engineer Live Smoke Test Evidence**:
+  - `cmd /c npx tsc --noEmit` &rarr; **Exit Code 0 (0 errors)**
+  - `node scripts/test_master_leads_architecture.js` &rarr; **36/36 tests passed (100%)**
+  - `node scripts/run_master_system_audit.js` &rarr; **140/140 tests passed (140/140 operational, 100%)**
+  - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+  - `node scripts/test_clean_architecture.js` &rarr; **64/64 tests passed (100%)**
+  - `node scripts/test_presence_sync.js` &rarr; **100% passed**
+  - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
+
+### Phase 12: In-Thread Agent Share Confirmation Guard (Completed)
+- **Date**: 2026-09-08
+- **Files Modified**:
+  - `hooks/thread/useThreadSession.ts`:
+    - Updated `handleToggleInThreadAgentShare` with explicit native confirmation prompts (`Alert.alert`) before modifying thread sharing permissions:
+      - Prompt on Share: `Share Thread with {agencyName}? Are you sure you want to share this conversation with {agencyName} management? Principal brokers will be able to review messages in this thread.`
+      - Prompt on Revoke: `Make Thread Private? Are you sure you want to revoke {agencyName} access? Only you and the client will be able to view future messages in this thread.`
+    - Added optimistic UI updates with automatic rollback upon API/DB error.
+    - Added non-blocking toast notifications (`Thread shared with {agencyName}` vs `Thread marked as private`).
+  - `scripts/test_master_leads_architecture.js` & `scripts/run_master_system_audit.js`:
+    - Added assertion verifying confirmation guard presence and updated suite counts (37/37 and 141/141 tests pass).
+- **Senior Engineer Live Smoke Test Evidence**:
+  - `cmd /c npx tsc --noEmit` &rarr; **Exit Code 0 (0 errors)**
+  - `node scripts/test_master_leads_architecture.js` &rarr; **37/37 tests passed (100%)**
+  - `node scripts/run_master_system_audit.js` &rarr; **141/141 tests passed (141/141 operational, 100%)**
+  - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+  - `node scripts/test_clean_architecture.js` &rarr; **64/64 tests passed (100%)**
+  - `node scripts/test_presence_sync.js` &rarr; **100% passed**
+  - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
+
+### Phase 13: Master Lead Internal Notes RLS & Cross-Platform Sync Remediation (Completed)
+- **Date**: 2026-09-08
+- **Files Modified**:
+  - `deltanhub/lib/master-leads.ts`:
+    - Implemented `resolveMasterLeadActorUser()` to support multi-platform authentication across mobile Bearer tokens (`Authorization: Bearer <token>`) and web browser cookies (`createClient()`).
+    - Wired `loadMasterLeadNotes`, `postLeadNote`, `canReadMasterLeadMessages`, `assignAgentToLead`, `updateLeadStatus`, and `toggleAgentShare` to use this unified authentication resolver.
+  - `deltanhub/app/api/dashboard/master-leads/[inquiryId]/notes/route.ts`:
+    - Hardened route error status codes to return HTTP `401 Unauthorized` on authentication failures.
+  - `deltanhub/supabase/migrations/202609081300_master_lead_internal_notes_rls.sql`:
+    - Created PostgreSQL RLS security migration on `public.master_lead_internal_notes`.
+    - Added `master_lead_internal_notes_insert_policy` allowing authors to insert if they are the inquiry company owner (for any visibility tier) or assigned agent (for `company_and_agent`).
+    - Added `master_lead_internal_notes_select_policy` allowing company owners to read all notes and assigned agents to read `company_and_agent` notes.
+    - Added 500k CCU composite index `master_lead_internal_notes_inq_vis_idx` on `(inquiry_id, visibility, created_at desc)` and executed `analyze`.
+  - `delchat/lib/repositories/leadsRepository.ts`:
+    - Refactored `InternalNoteItem` to support full camelCase and snake_case property compatibility (`inquiryId`, `authorUserId`, `author_user_id`, `authorName`, `author_name`, `visibility`, `createdAt`, `created_at`).
+    - Refactored `addInternalNote` to dispatch to DeltanHub Web API `POST /api/dashboard/master-leads/${inquiryId}/notes` with `{ body, visibility }` via `fetchWithAuth`, with resilient direct Supabase fallback protected by PostgreSQL RLS.
+    - Refactored `fetchInternalNotes` to query DeltanHub Web API `GET /api/dashboard/master-leads/${inquiryId}/notes` with resilient direct Supabase fallback protected by PostgreSQL RLS.
+  - `delchat/components/chat/crm/MasterLeadDetailsView.tsx`:
+    - Decoupled `loadNotes` and `handleCreateNote` from raw database queries, strictly delegating to `leadsRepository.fetchInternalNotes` and `leadsRepository.addInternalNote` (Anti-Spaghetti Clean Architecture).
+  - `delchat/scripts/test_master_leads_architecture.js` & `delchat/scripts/run_master_system_audit.js`:
+    - Added **Suite 10: Internal Notes RLS & Cross-Platform Sync Audit** (42/42 tests pass).
+    - Updated master system audit Tier 12 checks (141/141 tests pass).
+- **Senior Engineer Live Smoke Test Evidence**:
+  - `cmd /c npx tsc --noEmit` &rarr; **Exit Code 0 (0 errors)**
+  - `node scripts/test_master_leads_architecture.js` &rarr; **42/42 tests passed (100%)**
+  - `node scripts/test_clean_architecture.js` &rarr; **64/64 tests passed (100%)**
+  - `node scripts/test_role_permissions.js` &rarr; **10/10 tests passed (100%)**
+  - `node scripts/test_presence_sync.js` &rarr; **100% passed**
+  - `node scripts/run_master_system_audit.js` &rarr; **141/141 tests passed (141/141 operational, 100%)**
+  - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+
 ### What Is Left To Be Done:
-- **Universal Parity Complete**: DelChat is now 100% in feature, privacy, security, data integrity, and UI parity with DeltanHub web on Master Leads, Assigned Leads, and Archived folder management.
+- **Universal Parity Complete**: DelChat is now 100% in feature, privacy, security, data integrity, and UI parity with DeltanHub web on Master Leads, Assigned Leads, Internal Notes RLS, Buyer Moderation/Reporting, and In-Thread Agent Sharing.
 - **Native Binary Compilation (Stage 3 Operational Plan)**: Ready for standalone store compilation via EAS.
+
+
+
 
 

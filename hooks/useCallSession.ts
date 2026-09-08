@@ -21,6 +21,7 @@ import { callRepository } from '../lib/repositories';
 import { callKit } from '../lib/voip/callkit';
 import { connectionService } from '../lib/voip/connectionService';
 import { proximityService } from '../lib/voip/proximityService';
+import { callRingtoneService } from '../lib/voip/callRingtoneService';
 import { dispatchVoipCallCancellation } from '../lib/services/voipPushService';
 import { WebRTCMediaEngine } from '../lib/webrtc/mediaEngine';
 import type { CallPhase } from '../components/chat/CallModal';
@@ -49,6 +50,7 @@ export function useCallSession({
   const [partnerAvatarUrl, setPartnerAvatarUrl] = useState<string | null>(null);
   const [partnerRole, setPartnerRole] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
+  const [activeCallKind, setActiveCallKind] = useState<'audio' | 'video'>(kind || 'audio');
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -165,6 +167,7 @@ export function useCallSession({
 
         if (role === 'initiator') {
           setCallPhase('outgoing');
+          void callRingtoneService.playOutgoingRingback();
 
           // Delegate session creation to callRepository
           const result = await callRepository.createCallSession({
@@ -215,6 +218,7 @@ export function useCallSession({
             }
           }
 
+          void callRingtoneService.stopAllRingtones();
           setCallPhase('connected');
           void callKit.reportConnectedCall(activeSessionId || undefined);
           if (activeSessionId) {
@@ -231,6 +235,7 @@ export function useCallSession({
           }
         }
       } catch (err: any) {
+        void callRingtoneService.stopAllRingtones();
         const rawMsg = err?.message || '';
         const userMsg =
           rawMsg.includes('chat_call_sessions_one_active_per_conversation_idx') ||
@@ -246,6 +251,7 @@ export function useCallSession({
 
     return () => {
       isMounted = false;
+      void callRingtoneService.stopAllRingtones();
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
       void resetAudioAfterCall();
@@ -309,6 +315,7 @@ export function useCallSession({
             });
           }
         } else if (sig.signalType === 'hangup') {
+          void callRingtoneService.stopAllRingtones();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           setCallPhase('ended');
           if (durationTimerRef.current) clearInterval(durationTimerRef.current);
@@ -328,6 +335,14 @@ export function useCallSession({
           if (typeof sig.payload?.isVideoOff === 'boolean') {
             setRemoteIsVideoOff(sig.payload.isVideoOff);
           }
+        } else if (sig.signalType === 'upgrade-to-video') {
+          console.log('[WebRTC Live Signal] Remote partner upgraded call to video');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setActiveCallKind('video');
+          setIsVideoOff(false);
+          void mediaEngineRef.current?.upgradeToVideoMedia().then((updatedStream: any) => {
+            if (updatedStream) setLocalStream(updatedStream);
+          });
         }
       })
       .subscribe();
@@ -381,6 +396,7 @@ export function useCallSession({
           if (!updated) return;
 
           if (updated.call_status === 'accepted') {
+            void callRingtoneService.stopAllRingtones();
             setCallPhase('connected');
             void configureAudioForCall({ isSpeakerOn });
             if (kind === 'audio' && !isSpeakerOn) {
@@ -398,6 +414,7 @@ export function useCallSession({
             updated.call_status === 'missed' ||
             updated.call_status === 'canceled'
           ) {
+            void callRingtoneService.stopAllRingtones();
             setCallPhase('ended');
             if (durationTimerRef.current) clearInterval(durationTimerRef.current);
             void resetAudioAfterCall();
@@ -416,6 +433,7 @@ export function useCallSession({
   }, [conversationId, isSpeakerOn, kind]);
 
   const handleAcceptCall = async () => {
+    void callRingtoneService.stopAllRingtones();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setCallPhase('connected');
     void callKit.reportConnectedCall(activeSessionId || undefined);
@@ -446,6 +464,7 @@ export function useCallSession({
   };
 
   const handleDeclineCall = async () => {
+    void callRingtoneService.stopAllRingtones();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setCallPhase('ended');
     if (durationTimerRef.current) clearInterval(durationTimerRef.current);
@@ -497,6 +516,7 @@ export function useCallSession({
   };
 
   const handleEndCall = async () => {
+    void callRingtoneService.stopAllRingtones();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const prevPhase = callPhase;
     setCallPhase('ended');
@@ -574,7 +594,7 @@ export function useCallSession({
       void setSpeakerphone(next);
       if (next) {
         proximityService.disableProximity();
-      } else if (callPhase === 'connected' && kind === 'audio') {
+      } else if (callPhase === 'connected' && activeCallKind === 'audio') {
         proximityService.enableProximity();
       }
       return next;
@@ -585,12 +605,12 @@ export function useCallSession({
     setAudioRouteState(route);
     setIsSpeakerOn(route === 'speaker');
     await setAudioRoute(route);
-    if (route === 'earpiece' && callPhase === 'connected' && kind === 'audio') {
+    if (route === 'earpiece' && callPhase === 'connected' && activeCallKind === 'audio') {
       proximityService.enableProximity();
     } else {
       proximityService.disableProximity();
     }
-  }, [callPhase, kind]);
+  }, [callPhase, activeCallKind]);
 
   const handleRestartIce = useCallback(async () => {
     if (!mediaEngineRef.current || !activeSessionId || !currentUser || !partnerUserId) return;
@@ -624,6 +644,7 @@ export function useCallSession({
     handleAcceptCall,
     handleDeclineCall,
     handleEndCall,
+    activeCallKind,
     handleToggleMute: () => {
       setIsMuted((m) => {
         const next = !m;
@@ -635,12 +656,55 @@ export function useCallSession({
     handleToggleSpeaker,
     handleSetAudioRoute,
     handleRestartIce,
-    handleToggleVideo: () => {
-      setIsVideoOff((v) => {
-        const next = !v;
-        mediaEngineRef.current?.setVideoMuted(next);
-        return next;
-      });
+    handleUpgradeToVideo: async () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setActiveCallKind('video');
+      setIsVideoOff(false);
+      const updatedStream = await mediaEngineRef.current?.upgradeToVideoMedia();
+      if (updatedStream) setLocalStream(updatedStream);
+
+      if (activeSessionId && currentUser && partnerUserId) {
+        sendLiveCallSignal(liveChannelRef.current, {
+          callId: activeSessionId,
+          conversationId,
+          senderUserId: currentUser.id,
+          recipientUserId: partnerUserId,
+          signalType: 'upgrade-to-video',
+          payload: { requestedBy: currentUser.id },
+        });
+        void callRepository.updateCallSession(activeSessionId, {
+          callMode: 'video',
+        });
+      }
+    },
+    handleToggleVideo: async () => {
+      if (activeCallKind === 'audio') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setActiveCallKind('video');
+        setIsVideoOff(false);
+        const updatedStream = await mediaEngineRef.current?.upgradeToVideoMedia();
+        if (updatedStream) setLocalStream(updatedStream);
+
+        if (activeSessionId && currentUser && partnerUserId) {
+          sendLiveCallSignal(liveChannelRef.current, {
+            callId: activeSessionId,
+            conversationId,
+            senderUserId: currentUser.id,
+            recipientUserId: partnerUserId,
+            signalType: 'upgrade-to-video',
+            payload: { requestedBy: currentUser.id },
+          });
+          void callRepository.updateCallSession(activeSessionId, {
+            callMode: 'video',
+          });
+        }
+      } else {
+        setIsVideoOff((v) => {
+          const next = !v;
+          mediaEngineRef.current?.setVideoMuted(next);
+          return next;
+        });
+      }
     },
     handleSwitchCamera: () => {
       mediaEngineRef.current?.switchCamera();

@@ -35,7 +35,7 @@ export default function CallScreen() {
       <StatusBar style="light" />
       <CallModal
         visible={true}
-        callKind={kind}
+        callKind={session.activeCallKind}
         phase={session.callPhase}
         partnerName={session.partnerName}
         partnerAvatarUrl={session.partnerAvatarUrl}

@@ -35,6 +35,8 @@ import StarredMessagesModal from '../../components/chat/StarredMessagesModal';
 import ConnectionBanner from '../../components/chat/ConnectionBanner';
 import RecentCallsList from '../../components/chat/RecentCallsList';
 import SyncCoordinator from '../../lib/sync-coordinator';
+import MuteDurationModal from '../../components/chat/MuteDurationModal';
+import type { MuteDuration } from '../../lib/repositories/conversationRepository';
 import { useChatPinGate } from '../../components/chat/security/ChatPinGateProvider';
 
 export type InboxTab = 'all' | 'calls' | 'master-leads' | 'assigned-leads' | 'leads' | 'favourites' | 'support' | 'archived';
@@ -60,6 +62,10 @@ export default function InboxScreen() {
   // Conversation Action Modal
   const [actionModalConv, setActionModalConv] = useState<ChatConversation | null>(null);
   const [actionModalVisible, setActionModalVisible] = useState(false);
+
+  // Mute Duration Modal (WhatsApp/Telegram Parity)
+  const [muteTargetId, setMuteTargetId] = useState<string | null>(null);
+  const [muteModalVisible, setMuteModalVisible] = useState(false);
   const debounceRef = useRef<any>(null);
 
   // 1. Authenticate user & load normalized role profile
@@ -139,7 +145,6 @@ export default function InboxScreen() {
   const inboxTabs = useMemo(() => {
     const tabs: { key: InboxTab; label: string }[] = [
       { key: 'all', label: 'All' },
-      { key: 'calls', label: 'Calls' },
     ];
     if (canAssign) {
       tabs.push({ key: 'master-leads', label: 'Master Leads' });
@@ -150,7 +155,6 @@ export default function InboxScreen() {
     }
     tabs.push({ key: 'favourites', label: 'Favourites' });
     tabs.push({ key: 'support', label: 'Support' });
-    tabs.push({ key: 'archived', label: 'Archived' });
     return tabs;
   }, [canAssign, userIsAgent]);
 
@@ -323,6 +327,7 @@ export default function InboxScreen() {
         partnerName: target?.partnerName || 'Chat',
         title: target?.title || '',
         partnerSubtitle: target?.partnerSubtitle || target?.listing?.title || '',
+        listingId: target?.listing?.id || '',
       },
     });
   };
@@ -344,19 +349,38 @@ export default function InboxScreen() {
   };
 
   const handleToggleMute = async (conversationId: string, currentMuted: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (currentMuted) {
+      // Currently muted → immediately unmute
+      try {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === conversationId ? { ...c, isMuted: false } : c))
+        );
+        await conversationRepository.toggleConversationMute(conversationId, currentUser.id, false);
+      } catch (e: any) {
+        Alert.alert('Error', e.message);
+      }
+    } else {
+      // Currently unmuted → open duration picker
+      setMuteTargetId(conversationId);
+      setMuteModalVisible(true);
+    }
+  };
+
+  const handleInboxMuteWithDuration = async (duration: MuteDuration) => {
+    setMuteModalVisible(false);
+    if (!muteTargetId || !currentUser) return;
+    if (duration === 'unmute') return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setConversations((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, isMuted: !currentMuted } : c))
+        prev.map((c) => (c.id === muteTargetId ? { ...c, isMuted: true } : c))
       );
-      await conversationRepository.toggleConversationMute(
-        conversationId,
-        currentUser.id,
-        !currentMuted
-      );
+      await conversationRepository.toggleConversationMute(muteTargetId, currentUser.id, true, duration);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
+    setMuteTargetId(null);
   };
 
   const handleMarkReadToggle = async (conversationId: string, currentUnread: boolean) => {
@@ -598,15 +622,19 @@ export default function InboxScreen() {
                     style={[
                       styles.tabItem,
                       isActive && {
-                        backgroundColor: isDark ? '#3a0b18' : colors.primarySoft,
-                        borderColor: colors.primary,
+                        backgroundColor: isDark ? '#4a0f1f' : colors.primarySoft,
+                        borderColor: isDark ? '#6e1a30' : colors.primary,
                       },
                     ]}
                   >
                     <Text
                       style={[
                         styles.tabText,
-                        { color: isActive ? colors.primary : colors.placeholder },
+                        {
+                          color: isActive
+                            ? (isDark ? '#ffffff' : colors.primary)
+                            : (isDark ? '#ffffff' : colors.placeholder),
+                        },
                         isActive && { fontWeight: '700' },
                       ]}
                     >
@@ -618,27 +646,34 @@ export default function InboxScreen() {
             </ScrollView>
 
             {/* Unread Toggle Pill (for messages) */}
-            {activeTab !== 'calls' && (
-              <TouchableOpacity
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setUnreadOnly((prev) => !prev);
-                }}
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setUnreadOnly((prev) => !prev);
+              }}
+              style={[
+                styles.unreadFilterPill,
+                isDark && {
+                  borderColor: unreadOnly ? colors.primary : 'rgba(255, 255, 255, 0.3)',
+                },
+                unreadOnly && { backgroundColor: colors.primary },
+              ]}
+            >
+              <Text
                 style={[
-                  styles.unreadFilterPill,
-                  unreadOnly && { backgroundColor: colors.primary },
+                  styles.unreadFilterText,
+                  {
+                    color: unreadOnly
+                      ? '#ffffff'
+                      : isDark
+                      ? '#ffffff'
+                      : colors.placeholder,
+                  },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.unreadFilterText,
-                    { color: unreadOnly ? '#ffffff' : colors.placeholder },
-                  ]}
-                >
-                  Unread
-                </Text>
-              </TouchableOpacity>
-            )}
+                Unread
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -714,7 +749,7 @@ export default function InboxScreen() {
                 <ScalePressable
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setActiveTab('archived');
+                    router.push('/archived' as Href);
                   }}
                   style={[
                     styles.archivedFolderRow,
@@ -791,6 +826,13 @@ export default function InboxScreen() {
               router.push(`/thread/${convId}`);
             }
           }}
+        />
+
+        {/* WhatsApp/Telegram-Style Mute Duration Picker */}
+        <MuteDurationModal
+          visible={muteModalVisible}
+          onClose={() => { setMuteModalVisible(false); setMuteTargetId(null); }}
+          onSelect={handleInboxMuteWithDuration}
         />
       </View>
     </AnimatedPageWrapper>

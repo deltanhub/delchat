@@ -8,6 +8,7 @@ import { useColorScheme } from '../../useColorScheme';
 import Pressable from '../../ScalePressable';
 import * as Haptics from '../../../lib/haptics';
 import { supabase } from '../../../lib/supabase';
+import { leadsRepository } from '../../../lib/repositories/leadsRepository';
 import type { ChatConversation } from '../ConversationRow';
 import type { ChatMessage } from '../MessageBubble';
 import type { MasterLeadSubTab } from './MasterLeadSubHeader';
@@ -202,50 +203,32 @@ export default function MasterLeadDetailsView({
   }, [activeSubTab, loadReports]);
 
   const loadNotes = useCallback(async () => {
-    if (!inquiryId) return;
+    if (!inquiryId && !conversation?.id) return;
     setLoadingNotes(true);
     try {
-      const { data, error } = await supabase
-        .from('master_lead_internal_notes')
-        .select('id, inquiry_id, author_user_id, body, visibility, created_at')
-        .eq('inquiry_id', inquiryId)
-        .order('created_at', { ascending: false });
+      const result = await leadsRepository.fetchInternalNotes({
+        inquiryId,
+        conversationId: conversation?.id,
+      });
 
-      if (error) throw error;
-      if (data && data.length > 0) {
-        const authorIds = Array.from(
-          new Set(data.map((n: any) => n.author_user_id).filter(Boolean))
-        ) as string[];
-        let profileMap = new Map<string, PublicUserProfile>();
-        if (authorIds.length > 0) {
-          const { data: pData } = await supabase.rpc('get_public_user_profiles', {
-            requested_user_ids: authorIds,
-          });
-          if (pData) {
-            profileMap = new Map(
-              (pData as PublicUserProfile[]).map((p) => [p.user_id, p])
-            );
-          }
-        }
-        const mappedNotes: InternalNoteItem[] = data.map((n: any) => {
-          const p = profileMap.get(n.author_user_id);
-          return {
-            ...n,
-            author_name: p?.display_name || p?.full_name || 'Team Member',
-          };
-        });
-        setNotes(mappedNotes);
-        if (onNotesCountChange) onNotesCountChange(mappedNotes.length);
-      } else {
-        setNotes([]);
-        if (onNotesCountChange) onNotesCountChange(0);
-      }
+      const mappedNotes: InternalNoteItem[] = (result.notes || []).map((n) => ({
+        id: n.id,
+        inquiry_id: n.inquiry_id || n.inquiryId || inquiryId || '',
+        author_user_id: n.author_user_id || n.authorUserId || '',
+        author_name: n.author_name || n.authorName || 'Team Member',
+        body: n.body,
+        visibility: (n.visibility || 'company_and_agent') as 'company_only' | 'company_and_agent',
+        created_at: n.created_at || n.createdAt || new Date().toISOString(),
+      }));
+
+      setNotes(mappedNotes);
+      if (onNotesCountChange) onNotesCountChange(mappedNotes.length);
     } catch (err) {
       console.warn('[MasterLeadDetailsView] Error loading notes:', err);
     } finally {
       setLoadingNotes(false);
     }
-  }, [inquiryId, onNotesCountChange]);
+  }, [inquiryId, conversation?.id, onNotesCountChange]);
 
   useEffect(() => {
     if (activeSubTab === 'notes') {
@@ -259,20 +242,15 @@ export default function MasterLeadDetailsView({
     setPostingNote(true);
     try {
       const noteBody = newNoteText.trim();
-      const { data, error } = await supabase
-        .from('master_lead_internal_notes')
-        .insert({
-          inquiry_id: inquiryId,
-          author_user_id: currentUserId,
-          body: noteBody,
-          visibility: noteVisibility,
-        })
-        .select()
-        .single();
+      const res = await leadsRepository.addInternalNote({
+        inquiryId,
+        authorUserId: currentUserId,
+        body: noteBody,
+        visibility: noteVisibility,
+      });
 
-      if (error) throw error;
       const createdItem: InternalNoteItem = {
-        id: data?.id || String(Date.now()),
+        id: res?.id || String(Date.now()),
         inquiry_id: inquiryId,
         author_user_id: currentUserId,
         author_name: 'You',

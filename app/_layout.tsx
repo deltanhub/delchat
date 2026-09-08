@@ -135,6 +135,7 @@ export default function RootLayout() {
             <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="call/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="compose" options={{ presentation: 'modal', headerShown: false }} />
+            <Stack.Screen name="archived" options={{ headerShown: false, gestureEnabled: true }} />
           </Stack>
           <IncomingCallHUD />
         </ChatPinGateProvider>

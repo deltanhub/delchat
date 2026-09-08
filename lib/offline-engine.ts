@@ -195,6 +195,14 @@ export const OfflineEngine = {
   // 2. Inbox Conversations Persistence
   // -------------------------------------------------------------
 
+  /**
+   * Synchronously get a cached conversation from in-memory hot cache for instant 0ms Frame 1 rendering.
+   */
+  getConversationSync(conversationId: string): ChatConversation | null {
+    if (!conversationId || !_memoryConversationsCache) return null;
+    return _memoryConversationsCache.find((c) => c.id === conversationId) || null;
+  },
+
   async getConversations(): Promise<ChatConversation[]> {
     if (_memoryConversationsCache) {
       return _memoryConversationsCache;
@@ -219,6 +227,21 @@ export const OfflineEngine = {
       await AsyncStorage.setItem(CONVERSATIONS_STORAGE_KEY, JSON.stringify(convos));
     } catch (e) {
       console.warn('[OfflineEngine] Failed to save conversations to cache:', e);
+    }
+  },
+
+  /**
+   * Synchronously update or insert a single conversation in hot cache.
+   */
+  saveSingleConversation(conversation: ChatConversation): void {
+    if (!conversation?.id) return;
+    if (_memoryConversationsCache) {
+      const idx = _memoryConversationsCache.findIndex((c) => c.id === conversation.id);
+      if (idx >= 0) {
+        _memoryConversationsCache[idx] = { ..._memoryConversationsCache[idx], ...conversation };
+      } else {
+        _memoryConversationsCache.unshift(conversation);
+      }
     }
   },
 

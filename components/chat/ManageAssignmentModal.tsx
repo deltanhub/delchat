@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -50,6 +50,7 @@ export default function ManageAssignmentModal({
 
   const [agents, setAgents] = useState<BrokerageAgent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'internal' | 'external'>('internal');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(
     currentAssignedAgentId || null
@@ -58,10 +59,39 @@ export default function ManageAssignmentModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Sync selected agent if prop changes
+  // Partition agents into Internal and External rosters
+  const internalAgents = useMemo(
+    () => agents.filter((a) => a.agentType !== 'external'),
+    [agents]
+  );
+  const externalAgents = useMemo(
+    () => agents.filter((a) => a.agentType === 'external'),
+    [agents]
+  );
+
+  // Sync selected agent if prop changes & auto-select tab matching current assignment
   useEffect(() => {
     setSelectedAgentId(currentAssignedAgentId || null);
-  }, [currentAssignedAgentId]);
+    if (currentAssignedAgentId && agents.length > 0) {
+      const assigned = agents.find((a) => a.userId === currentAssignedAgentId);
+      if (assigned?.agentType === 'external') {
+        setActiveTab('external');
+      } else if (assigned?.agentType === 'internal') {
+        setActiveTab('internal');
+      }
+    }
+  }, [currentAssignedAgentId, agents]);
+
+  // If initial load has 0 internal but has external agents, default tab to external
+  useEffect(() => {
+    if (agents.length > 0) {
+      const hasInternal = agents.some((a) => a.agentType !== 'external');
+      const hasExternal = agents.some((a) => a.agentType === 'external');
+      if (!hasInternal && hasExternal) {
+        setActiveTab('external');
+      }
+    }
+  }, [agents]);
 
   const fetchBrokerageAgents = useCallback(async () => {
     setLoading(true);
@@ -100,7 +130,9 @@ export default function ManageAssignmentModal({
 
   if (!visible) return null;
 
-  const filteredAgents = agents.filter((a) => {
+  const currentTabAgents = activeTab === 'internal' ? internalAgents : externalAgents;
+
+  const filteredAgents = currentTabAgents.filter((a) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     const nameMatch = a.name.toLowerCase().includes(q);
@@ -187,7 +219,6 @@ export default function ManageAssignmentModal({
             {
               backgroundColor: colors.card,
               borderTopColor: colors.border,
-              paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
         >
@@ -264,6 +295,157 @@ export default function ManageAssignmentModal({
             </View>
           </View>
 
+          {/* Two Clickable Columns: Live Internal Agents & External Agents */}
+          <View style={[styles.columnSwitcherContainer, { borderBottomColor: colors.border }]}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setActiveTab('internal');
+              }}
+              style={[
+                styles.columnTab,
+                {
+                  backgroundColor:
+                    activeTab === 'internal'
+                      ? isDark
+                        ? '#3a0b18'
+                        : colors.primarySoft
+                      : isDark
+                      ? '#18181b'
+                      : '#f8fafc',
+                  borderColor: activeTab === 'internal' ? colors.primary : colors.border,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Internal Agents"
+            >
+              <View style={styles.columnTabContent}>
+                <View style={styles.columnTabHeader}>
+                  <Ionicons
+                    name="shield-checkmark"
+                    size={16}
+                    color={activeTab === 'internal' ? colors.primary : colors.placeholder}
+                  />
+                  <Text
+                    style={[
+                      styles.columnTabTitle,
+                      { color: activeTab === 'internal' ? colors.primary : colors.text },
+                      activeTab === 'internal' && { fontWeight: '700' },
+                    ]}
+                  >
+                    Internal Agents
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.columnBadge,
+                    {
+                      backgroundColor:
+                        activeTab === 'internal'
+                          ? colors.primary
+                          : isDark
+                          ? '#27272a'
+                          : '#e2e8f0',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.columnBadgeText,
+                      { color: activeTab === 'internal' ? '#ffffff' : colors.placeholder },
+                    ]}
+                  >
+                    {internalAgents.length}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={[
+                  styles.columnSubLabel,
+                  { color: activeTab === 'internal' ? colors.primaryMuted : colors.placeholder },
+                ]}
+                numberOfLines={1}
+              >
+                In-house Team
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setActiveTab('external');
+              }}
+              style={[
+                styles.columnTab,
+                {
+                  backgroundColor:
+                    activeTab === 'external'
+                      ? isDark
+                        ? '#3a0b18'
+                        : colors.primarySoft
+                      : isDark
+                      ? '#18181b'
+                      : '#f8fafc',
+                  borderColor: activeTab === 'external' ? colors.primary : colors.border,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="External Agents"
+            >
+              <View style={styles.columnTabContent}>
+                <View style={styles.columnTabHeader}>
+                  <Ionicons
+                    name="globe-outline"
+                    size={16}
+                    color={activeTab === 'external' ? colors.primary : colors.placeholder}
+                  />
+                  <Text
+                    style={[
+                      styles.columnTabTitle,
+                      { color: activeTab === 'external' ? colors.primary : colors.text },
+                      activeTab === 'external' && { fontWeight: '700' },
+                    ]}
+                  >
+                    External Agents
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.columnBadge,
+                    {
+                      backgroundColor:
+                        activeTab === 'external'
+                          ? colors.primary
+                          : isDark
+                          ? '#27272a'
+                          : '#e2e8f0',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.columnBadgeText,
+                      { color: activeTab === 'external' ? '#ffffff' : colors.placeholder },
+                    ]}
+                  >
+                    {externalAgents.length}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={[
+                  styles.columnSubLabel,
+                  { color: activeTab === 'external' ? colors.primaryMuted : colors.placeholder },
+                ]}
+                numberOfLines={1}
+              >
+                Co-broker & Network
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Agent Selection List */}
           <View style={styles.listWrapper}>
             {loading ? (
@@ -275,10 +457,24 @@ export default function ManageAssignmentModal({
               </View>
             ) : filteredAgents.length === 0 ? (
               <View style={styles.centerContainer}>
-                <Ionicons name="person-outline" size={40} color={colors.placeholder} />
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>No agents found</Text>
+                <Ionicons
+                  name={activeTab === 'internal' ? 'people-outline' : 'globe-outline'}
+                  size={40}
+                  color={colors.placeholder}
+                />
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                  {searchQuery.trim()
+                    ? 'No matching agents found'
+                    : activeTab === 'internal'
+                    ? 'No internal agents found'
+                    : 'No external agents found'}
+                </Text>
                 <Text style={[styles.emptySubtitle, { color: colors.placeholder }]}>
-                  No brokerage team members matched your search.
+                  {searchQuery.trim()
+                    ? `No ${activeTab} agents matched "${searchQuery}".`
+                    : activeTab === 'internal'
+                    ? 'No in-house agents are currently linked to this brokerage organization.'
+                    : 'No external partner agents are currently linked to this brokerage organization.'}
                 </Text>
               </View>
             ) : (
@@ -330,7 +526,7 @@ export default function ManageAssignmentModal({
                         )}
 
                         <View style={styles.agentInfo}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                             <Text
                               style={[
                                 styles.agentName,
@@ -341,6 +537,45 @@ export default function ManageAssignmentModal({
                             >
                               {item.name}
                             </Text>
+                            <View
+                              style={[
+                                styles.agentTypeBadge,
+                                {
+                                  backgroundColor:
+                                    item.agentType === 'external'
+                                      ? isDark
+                                        ? 'rgba(59, 130, 246, 0.15)'
+                                        : '#eff6ff'
+                                      : isDark
+                                      ? 'rgba(74, 15, 31, 0.25)'
+                                      : '#fcedf2',
+                                  borderColor:
+                                    item.agentType === 'external'
+                                      ? isDark
+                                        ? '#1d4ed8'
+                                        : '#bfdbfe'
+                                      : isDark
+                                      ? '#5c1d29'
+                                      : '#fecdd3',
+                                },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.agentTypeBadgeText,
+                                  {
+                                    color:
+                                      item.agentType === 'external'
+                                        ? isDark
+                                          ? '#93c5fd'
+                                          : '#2563eb'
+                                        : colors.primary,
+                                  },
+                                ]}
+                              >
+                                {item.agentType === 'external' ? 'EXTERNAL' : 'INTERNAL'}
+                              </Text>
+                            </View>
                             {isCurrent && (
                               <View style={[styles.currentBadge, { backgroundColor: isDark ? '#27272a' : '#e2e8f0' }]}>
                                 <Text style={[styles.currentBadgeText, { color: colors.placeholder }]}>
@@ -372,7 +607,16 @@ export default function ManageAssignmentModal({
           </View>
 
           {/* Handoff Note & Bottom Actions */}
-          <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: isDark ? '#140509' : '#fbfcfd' }]}>
+          <View
+            style={[
+              styles.footer,
+              {
+                borderTopColor: colors.border,
+                backgroundColor: isDark ? '#140509' : '#fbfcfd',
+                paddingBottom: Math.max(insets.bottom, 16) + 6,
+              },
+            ]}
+          >
             <Text style={[styles.noteLabel, { color: colors.placeholder }]}>
               INTERNAL HANDOFF NOTE (OPTIONAL)
             </Text>
@@ -406,30 +650,63 @@ export default function ManageAssignmentModal({
                 </TouchableOpacity>
               ) : null}
 
-              <ScalePressable
-                onPress={handleAssign}
-                disabled={isSubmitting || !selectedAgentId}
-                style={[
-                  styles.assignBtn,
-                  {
-                    backgroundColor: selectedAgentId ? colors.primary : colors.border,
-                    flex: 1,
-                  },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Confirm assignment"
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle" size={18} color="#ffffff" />
-                    <Text style={styles.assignBtnText}>
-                      {currentAssignedAgentId ? 'Reassign Lead' : 'Assign to Agent'}
-                    </Text>
-                  </>
-                )}
-              </ScalePressable>
+              {!selectedAgentId ? (
+                <View
+                  style={[
+                    styles.assignBtn,
+                    {
+                      backgroundColor: isDark ? 'rgba(74, 15, 31, 0.20)' : '#fcedf2',
+                      borderWidth: 1,
+                      borderColor: isDark ? 'rgba(140, 65, 84, 0.45)' : '#fed7dd',
+                      flex: 1,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="person-add-outline"
+                    size={17}
+                    color={isDark ? '#f4a6b7' : '#9f1239'}
+                  />
+                  <Text
+                    style={[
+                      styles.assignBtnText,
+                      {
+                        color: isDark ? '#f4a6b7' : '#9f1239',
+                        fontWeight: '600',
+                      },
+                    ]}
+                  >
+                    Select an Agent to Assign
+                  </Text>
+                </View>
+              ) : (
+                <ScalePressable
+                  onPress={handleAssign}
+                  disabled={isSubmitting}
+                  style={[
+                    styles.assignBtn,
+                    {
+                      backgroundColor: colors.primary,
+                      flex: 1,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirm assignment"
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle" size={18} color="#ffffff" />
+                      <Text style={[styles.assignBtnText, { color: '#ffffff', fontWeight: '700' }]}>
+                        {currentAssignedAgentId
+                          ? 'Reassign Lead'
+                          : `Assign to ${selectedAgent?.name || 'Agent'}`}
+                      </Text>
+                    </>
+                  )}
+                </ScalePressable>
+              )}
             </View>
           </View>
         </View>
@@ -448,6 +725,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
   },
   container: {
+    height: Math.min(SCREEN_HEIGHT * 0.82, 720),
     maxHeight: SCREEN_HEIGHT * 0.90,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -545,12 +823,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingVertical: 0,
   },
+  columnSwitcherContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  columnTab: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  columnTabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  columnTabHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  columnTabTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  columnBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  columnBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  columnSubLabel: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  agentTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  agentTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
   listWrapper: {
-    maxHeight: SCREEN_HEIGHT * 0.40,
-    flexShrink: 1,
+    flex: 1,
   },
   agentList: {
-    flexGrow: 0,
+    flex: 1,
   },
   centerContainer: {
     alignItems: 'center',
@@ -635,7 +968,6 @@ const styles = StyleSheet.create({
   footer: {
     paddingHorizontal: 20,
     paddingTop: 14,
-    paddingBottom: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   noteLabel: {

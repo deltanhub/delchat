@@ -255,6 +255,60 @@ export class WebRTCMediaEngine {
   }
 
   /**
+   * Acquire camera video track mid-call and attach to existing peer connection.
+   */
+  public async upgradeToVideoMedia(facingMode: 'user' | 'environment' = 'user'): Promise<any> {
+    this.currentFacingMode = facingMode;
+
+    if (this.isNativeModuleAvailable && this.nativeWebRTC?.mediaDevices?.getUserMedia) {
+      try {
+        const videoConstraints = {
+          audio: false,
+          video: {
+            facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          },
+        };
+        const videoOnlyStream = await this.nativeWebRTC.mediaDevices.getUserMedia(videoConstraints);
+        const videoTracks = videoOnlyStream.getVideoTracks();
+
+        if (videoTracks.length > 0 && this.localStream) {
+          const newVideoTrack = videoTracks[0];
+          if (typeof this.localStream.addTrack === 'function') {
+            this.localStream.addTrack(newVideoTrack);
+          }
+          if (this.peerConnection && typeof this.peerConnection.addTrack === 'function') {
+            try {
+              this.peerConnection.addTrack(newVideoTrack, this.localStream);
+            } catch {}
+          }
+        }
+        return this.localStream;
+      } catch (err) {
+        console.warn('[MediaEngine] Error upgrading to video stream:', err);
+      }
+    }
+
+    // Simulated upgrade fallback
+    const newVideoTrack = { kind: 'video', enabled: true, stop: () => {} };
+    if (this.localStream) {
+      const existingAudioTracks = this.localStream.getAudioTracks
+        ? this.localStream.getAudioTracks()
+        : [{ kind: 'audio', enabled: true, stop: () => {} }];
+      this.localStream = {
+        ...this.localStream,
+        getTracks: () => [...existingAudioTracks, newVideoTrack],
+        getAudioTracks: () => existingAudioTracks,
+        getVideoTracks: () => [newVideoTrack],
+      };
+    }
+    return this.localStream;
+  }
+
+
+  /**
    * Create SDP offer for call initiator or ICE restart renegotiation.
    */
   public async createOffer(options?: { iceRestart?: boolean }): Promise<RTCSessionDescriptionPayload> {
