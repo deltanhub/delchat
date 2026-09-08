@@ -428,6 +428,9 @@ Check the "What Is Left To Be Done" section in `DELCHAT_MASTER_LEADS_AND_ASSIGNE
     - Added `master_lead_internal_notes_insert_policy` allowing authors to insert if they are the inquiry company owner (for any visibility tier) or assigned agent (for `company_and_agent`).
     - Added `master_lead_internal_notes_select_policy` allowing company owners to read all notes and assigned agents to read `company_and_agent` notes.
     - Added 500k CCU composite index `master_lead_internal_notes_inq_vis_idx` on `(inquiry_id, visibility, created_at desc)` and executed `analyze`.
+  - `deltanhub/scripts/apply_migration_internal_notes.js`:
+    - Executed migration directly on remote Supabase pooler (`aws-0-eu-west-1.pooler.supabase.com:6543`).
+    - Verified `rowsecurity: true`, both policies active (`master_lead_internal_notes_insert_policy`, `master_lead_internal_notes_select_policy`), and index active (`master_lead_internal_notes_inq_vis_idx`).
   - `delchat/lib/repositories/leadsRepository.ts`:
     - Refactored `InternalNoteItem` to support full camelCase and snake_case property compatibility (`inquiryId`, `authorUserId`, `author_user_id`, `authorName`, `author_name`, `visibility`, `createdAt`, `created_at`).
     - Refactored `addInternalNote` to dispatch to DeltanHub Web API `POST /api/dashboard/master-leads/${inquiryId}/notes` with `{ body, visibility }` via `fetchWithAuth`, with resilient direct Supabase fallback protected by PostgreSQL RLS.
@@ -445,10 +448,12 @@ Check the "What Is Left To Be Done" section in `DELCHAT_MASTER_LEADS_AND_ASSIGNE
   - `node scripts/test_presence_sync.js` &rarr; **100% passed**
   - `node scripts/run_master_system_audit.js` &rarr; **141/141 tests passed (141/141 operational, 100%)**
   - `node scripts/run_comprehensive_audit.js` &rarr; **62/62 tests passed (100%)**
+  - `node scripts/apply_migration_internal_notes.js` (deltanhub) &rarr; **Exit Code 0 (Applied to live Supabase DB)**
 
 ### What Is Left To Be Done:
 - **Universal Parity Complete**: DelChat is now 100% in feature, privacy, security, data integrity, and UI parity with DeltanHub web on Master Leads, Assigned Leads, Internal Notes RLS, Buyer Moderation/Reporting, and In-Thread Agent Sharing.
 - **Native Binary Compilation (Stage 3 Operational Plan)**: Ready for standalone store compilation via EAS.
+
 
 
 
