@@ -28,6 +28,19 @@ function fail(desc, err) {
   failedTests++;
 }
 
+function getThreadSessionContent() {
+  const files = [
+    path.join(ROOT_DIR, 'hooks', 'thread', 'useThreadSession.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'index.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'sessionResolutionHelper.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'useConversationDetailsFetch.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'useSessionLeadActions.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'useSessionReportAction.ts'),
+    path.join(ROOT_DIR, 'hooks', 'thread', 'session', 'useSessionState.ts'),
+  ];
+  return files.filter(f => fs.existsSync(f)).map(f => fs.readFileSync(f, 'utf8')).join('\n');
+}
+
 console.log('================================================================');
 console.log('  DELCHAT MASTER LEADS & ASSIGNED LEADS ARCHITECTURE AUDIT');
 console.log('================================================================\n');
@@ -281,8 +294,7 @@ try {
   pass('ChatLeadsView renders Master Lead badge and assigned agent chip on delegated lead cards');
 
   // 5. Verify thread session consumer guard
-  const sessionPath = path.join(ROOT_DIR, 'hooks', 'thread', 'useThreadSession.ts');
-  const sessionContent = fs.readFileSync(sessionPath, 'utf8');
+  const sessionContent = getThreadSessionContent();
   assert(sessionContent.includes('isViewerProfessional = canReceiveLeads('), 'Thread session checks professional role');
   assert(sessionContent.includes('inquiryData && isViewerProfessional'), 'Thread session suppresses assignmentObj for Buyer accounts');
   pass('useThreadSession strictly suppresses internal lead assignment data for Buyer accounts');
@@ -326,8 +338,7 @@ try {
   pass('ThreadScreen enforces agent-buyer privacy guard on feed and composer when agent sharing is disabled');
 
   // 5. Verify optimistic updates and live badge counters
-  const sessionPath = path.join(ROOT_DIR, 'hooks', 'thread', 'useThreadSession.ts');
-  const sessionContent = fs.readFileSync(sessionPath, 'utf8');
+  const sessionContent = getThreadSessionContent();
   assert(sessionContent.includes('masterLeadStatus: newStatus'), 'Optimistically updates masterLeadStatus in thread session');
   assert(sessionContent.includes('notesCount') && sessionContent.includes('reportsCount'), 'Tracks live notesCount and reportsCount badges');
   pass('useThreadSession provides zero-latency masterLeadStatus sync and tracks live badge counters');
@@ -366,8 +377,7 @@ try {
   pass('conversationRepository strictly eliminates false master lead badging when agency is buyer or unassigned');
 
   // 4. Verify thread session selects buyer_user_id and archives
-  const sessionPath = path.join(ROOT_DIR, 'hooks', 'thread', 'useThreadSession.ts');
-  const sessionContent = fs.readFileSync(sessionPath, 'utf8');
+  const sessionContent = getThreadSessionContent();
   assert(
     sessionContent.includes('buyer_user_id') && sessionContent.includes('isArchived = Boolean(currentParticipant?.archived_at)'),
     'useThreadSession reads buyer_user_id and participant archive state'
@@ -411,8 +421,7 @@ try {
   pass('ReportModal provides interactive "Reveal Chat History" consent toggle with agency branding');
 
   // 2. Verify useThreadSession.ts inserts into master_lead_reports with messages_consent
-  const sessionPath = path.join(ROOT_DIR, 'hooks', 'thread', 'useThreadSession.ts');
-  const sessionContent = fs.readFileSync(sessionPath, 'utf8');
+  const sessionContent = getThreadSessionContent();
 
   assert(
     sessionContent.includes("supabase.from('master_lead_reports').insert({") &&

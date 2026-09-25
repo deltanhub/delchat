@@ -1,0 +1,142 @@
+import { StyleSheet, Dimensions } from 'react-native';
+import { Typography } from '../../../constants/Typography';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+export const peekStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  modalContainer: {
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  peekCard: {
+    width: '100%',
+    height: Math.min(230, SCREEN_HEIGHT * 0.32),
+    borderRadius: 16,
+    backgroundColor: '#1c1c1e',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    elevation: 14,
+    marginBottom: 12,
+  },
+  peekHeader: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#252528',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  peekAvatarInitials: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#4A0F1F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  peekAvatarInitialsText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  peekHeaderTitle: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: Typography.fontFamily,
+  },
+  peekHeaderSub: {
+    color: '#8e8e93',
+    fontSize: 11,
+    fontFamily: Typography.fontFamily,
+    marginTop: 1,
+  },
+  peekBody: {
+    flex: 1,
+    backgroundColor: '#151517',
+  },
+  peekBodyContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+    justifyContent: 'flex-end',
+    minHeight: '100%',
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  peekBubble: {
+    maxWidth: '82%',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  peekBubbleMe: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#4A0F1F',
+    borderBottomRightRadius: 2,
+  },
+  peekBubbleOther: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2c2c2e',
+    borderBottomLeftRadius: 2,
+  },
+  peekSenderLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#f4a5b8',
+    marginBottom: 1,
+  },
+  peekMsgText: {
+    fontSize: 12.5,
+    lineHeight: 16.5,
+    fontFamily: Typography.fontFamily,
+  },
+  peekTimeText: {
+    fontSize: 9,
+    alignSelf: 'flex-end',
+    color: 'rgba(255, 255, 255, 0.55)',
+    marginTop: 2,
+  },
+  peekInputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#252528',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  peekInputMock: {
+    flex: 1,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#1c1c1e',
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+  },
+  peekInputMockText: {
+    fontSize: 11,
+    color: '#636366',
+  },
+});

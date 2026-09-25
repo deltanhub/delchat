@@ -1,0 +1,73 @@
+import { StyleSheet } from 'react-native';
+
+export const pipStyles = StyleSheet.create({
+  pipContainer: {
+    position: 'absolute',
+    right: 18,
+    width: 105,
+    height: 145,
+    borderRadius: 18,
+    zIndex: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  pipInner: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: '#1e293b',
+  },
+  pipCameraOffBox: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pipCameraOffText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#cbd5e1',
+    marginTop: 6,
+  },
+  pipLiveBox: {
+    flex: 1,
+    backgroundColor: '#1e293b',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pipLiveMockView: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pipSelfTag: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  pipSelfTagText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  pipFlipBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});

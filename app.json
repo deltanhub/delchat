@@ -28,8 +28,10 @@
           "voip",
           "remote-notification",
           "fetch"
-        ]
-      }
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bitcode": false
     },
     "android": {
       "googleServicesFile": "./google-services.json",
@@ -52,7 +54,8 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
         "android.permission.MANAGE_OWN_CALLS",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ],
       "intentFilters": [
         {
@@ -112,7 +115,10 @@
         {
           "icon": "./assets/images/icon.png",
           "color": "#4a0f1f",
-          "sounds": []
+          "sounds": [
+            "./assets/sounds/incoming_ring.wav",
+            "./assets/sounds/ringback.wav"
+          ]
         }
       ],
       "expo-asset",
@@ -130,9 +136,15 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f6e8bee6-85ad-4878-8b8e-592b409af7ed"
+        "projectId": "98aee785-44ef-446e-9899-2b3c249b0866"
       }
     },
-    "owner": "trust3690"
+    "owner": "aeosa",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/98aee785-44ef-446e-9899-2b3c249b0866"
+    }
   }
 }

@@ -279,15 +279,56 @@ node scripts/test_role_permissions.js
   - `node scripts/test_clean_architecture.js` &rarr; 64/64 PASSED (100%)
   - `node scripts/test_presence_sync.js` &rarr; 100% PASSED
 
+### Phase 10: Role & Permissions Invariant Preservation Across Clean Architecture Modularization (COMPLETED)
+- **What Was Done**:
+  1. `hooks/inbox/actions/useConversationMutationActions.ts` & `useConversationSafetyActions.ts`: Preserved role-based permissions and user scoping during inbox actions modularization.
+  2. `hooks/thread/session/useSessionAuthInit.ts` & `useSessionLeadActions.ts`: Strictly preserved buyer privacy suppression, ensuring `canReceiveLeads(profile?.mainRole)` prevents exposure of internal inquiry data to buyers.
+  3. `hooks/crm/lead_details/useLeadNotesState.ts` & `useLeadHistoryReports.ts`: Strictly preserved tenant-scoped permissions, audit trail actor resolution, and role-segregated visibility tiers (`company_only` vs `company_and_agent`).
+  4. `hooks/compose/useContactSearch.ts`: Enforced role-aware contact discovery across company memberships and peer roles.
+  5. `app/(tabs)/_layout.tsx`: Modularized tab bar to `components/navigation/` while strictly preserving role-based route filtering for Buyers and Landlords (`leads: isLandlord ? 'Inquiries' : 'CRM'`).
+  6. `app/(tabs)/leads.tsx`: Modularized screen to `components/leads/tabs/` while strictly preserving `canReceiveLeads` route guard and `LeadsRestrictedView`.
+  7. Tested and certified: `test_role_permissions.js` (10/10) and `test_master_leads_architecture.js` (42/42) pass 100%.
+- **Why It Was Done**:
+  Guarantees zero security or permission regressions while modularizing large domain hooks, screens, and domain repositories down to $\le 150$ LOC.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` &rarr; Exit Code 0 (0 errors)
+  - `node scripts/test_role_permissions.js` &rarr; 10/10 PASSED (100%)
+  - `node scripts/test_master_leads_architecture.js` &rarr; 42/42 PASSED (100%)
+  - `node scripts/test_leads_repo_modular_architecture.js` &rarr; PASSED (100%)
+  - `node scripts/test_leads_repo_deep_live.js` &rarr; PASSED (100%)
+  - `node scripts/test_batch7_screens_modular_architecture.js` &rarr; 23/23 PASSED (100%)
+### Phase 11: Core Auth Infrastructure Modularization & Invariant Preservation (Batches 8-10) (COMPLETED)
+- **What Was Done**:
+  1. `lib/auth.ts`: Slashed from 211 lines down to **49 lines** ($\le 150$). Extracted `lib/auth/roles.ts` (83 LOC) and `lib/auth/profileFetcher.ts` (117 LOC).
+  2. Preserved all role classification helpers (`normalizeRole`, `isProfessionalRole`, `canReceiveLeads`, `canAssignAgents`, `formatRoleLabel`) and 60-second in-memory profile caching with RPC fallback.
+  3. `components/leads/data/useLeadsData.ts`: Preserved role-based sub-tab partitioning (Master Leads vs My Leads) and buyer privacy suppression.
+  4. Tested and certified: `test_role_permissions.js` (10/10) and `test_master_leads_architecture.js` (42/42) pass 100%.
+  5. Scanned all 95 files in `lib/` — 100% strictly $\le 150$ LOC.
+  6. Master System Audit expanded to Tier 80: **872/872 tests pass (100% Certified Operational, exit code 0)**.
+- **Why It Was Done**:
+  To decouple pure role permission calculations from remote database/RPC profile hydration, while maintaining absolute zero regressions in role-based authorization across the app.
+- **Smoke Test Results & Proof**:
+  - `cmd /c npx tsc --noEmit` &rarr; Exit Code 0 (0 errors)
+  - `node scripts/test_role_permissions.js` &rarr; 10/10 PASSED (100%)
+  - `node scripts/test_master_leads_architecture.js` &rarr; 42/42 PASSED (100%)
+  - `node scripts/test_batch10_services_modular_architecture.js` &rarr; 37/37 PASSED (100%)
+  - `node scripts/run_comprehensive_audit.js` &rarr; 62/62 PASSED (100%)
+  - `node scripts/test_clean_architecture.js` &rarr; 64/64 PASSED (100%)
+  - `node scripts/test_presence_sync.js` &rarr; ALL TESTS PASSED (100%)
+  - `node scripts/run_master_system_audit.js` &rarr; **872/872 PASSED across all 80 tiers (100%, exit code 0)**
+
 ---
+
 
 ## 7. What Is Left To Be Done
 
 All core Role-Based Authentication, Granular Permissions, Master Leads, Assigned Leads, and Buyer Moderation features are **100% complete and certified operational**:
 1. Leads CRM & Chat Inquiries Screen Decomposition ([`app/(tabs)/leads.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/app/(tabs)/leads.tsx)) is **100% COMPLETED** into modular sub-components under `components/leads/` and `components/inquiries/` with route guards strictly preserved.
-2. Strict Domain Typing & Zero-Any Cleanliness is **100% COMPLETED** with zero `as any` type escapes across all role and permissions handling.
-3. Master Lead & Assigned Lead Thread Workspace Parity is **100% COMPLETED** with strict buyer privacy protection.
-4. Buyer Agent Reporting & Chat Reveal Consent is **100% COMPLETED** with database persistence and UI integration.
-5. Proceed to Stage 3 App Store Native Compilation (`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`).
+2. Bottom Tab Navigation ([`app/(tabs)/_layout.tsx`](file:///c:/Users/alfre/OneDrive/Desktop/delchat/app/(tabs)/_layout.tsx)) is **100% COMPLETED** into modular components with role filtering strictly preserved.
+3. Strict Domain Typing & Zero-Any Cleanliness is **100% COMPLETED** with zero `as any` type escapes across all role and permissions handling.
+4. Master Lead & Assigned Lead Thread Workspace Parity is **100% COMPLETED** with strict buyer privacy protection.
+5. Buyer Agent Reporting & Chat Reveal Consent is **100% COMPLETED** with database persistence and UI integration.
+6. All screens, domain hooks, polymorphic message bubbles, and domain repositories decomposed into clean single-responsibility files strictly $\le 150$ LOC.
+7. Proceed to Stage 3 App Store Native Compilation (`DELCHAT_500K_CCU_GO_LIVE_OPERATIONAL_PLAN.md`).
 
 

@@ -1,0 +1,136 @@
+import { StyleSheet } from 'react-native';
+
+export const styles = StyleSheet.create({
+  rowContainer: {
+    flexDirection: 'row',
+    marginVertical: 4,
+    paddingHorizontal: 12,
+  },
+  justifyLeft: {
+    justifyContent: 'flex-start',
+  },
+  headerTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  brandTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#5C1324',
+    letterSpacing: 0.8,
+  },
+  verifiedCheck: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#5C1324',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  announcementBadge: {
+    backgroundColor: '#faecef',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  announcementBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#5C1324',
+  },
+  cardContainer: {
+    borderRadius: 20,
+    borderTopLeftRadius: 6,
+    borderWidth: 1,
+    overflow: 'hidden',
+    shadowColor: '#5C1324',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  imageContainer: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#f5eff1',
+  },
+  bannerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  videoContainer: {
+    width: '100%',
+    height: 140,
+    backgroundColor: '#101828',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#5C1324',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPromptText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  tourContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderBottomWidth: 1,
+  },
+  tourTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#5C1324',
+  },
+  tourSubtitle: {
+    fontSize: 10,
+  },
+  contentBody: {
+    padding: 16,
+  },
+  contentTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 6,
+    lineHeight: 22,
+  },
+  contentText: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  ctaButton: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#5C1324',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  ctaButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  footerRow: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+});

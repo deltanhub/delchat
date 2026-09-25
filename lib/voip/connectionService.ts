@@ -41,12 +41,14 @@ class ConnectionServiceManager {
 
     try {
       // Configure high-importance heads-up notification channel for VoIP calls
+      // Note: In expo-notifications on Android, omitting 'sound' (or leaving undefined) correctly
+      // binds to Settings.System.DEFAULT_NOTIFICATION_URI. Passing 'default' causes Android to look
+      // for a custom sound resource literally named 'default', logging an error.
       await Notifications.setNotificationChannelAsync(VOIP_NOTIFICATION_CHANNEL_ID, {
         name: 'DelChat VoIP Calls',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 1000, 800, 1000],
         lightColor: '#4A0F1F', // DeltanHub Wine Brand Color
-        sound: 'default',
         enableLights: true,
         enableVibrate: true,
         showBadge: true,
@@ -85,7 +87,6 @@ class ConnectionServiceManager {
             callKind,
           },
           categoryIdentifier: 'VOIP_CALL_CATEGORY',
-          sound: 'default',
           priority: Notifications.AndroidNotificationPriority?.MAX ?? 'max',
           color: '#4A0F1F',
           sticky: true,

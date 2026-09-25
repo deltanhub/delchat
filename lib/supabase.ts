@@ -34,6 +34,7 @@ const originalChannel = supabase.channel.bind(supabase);
   );
   if (existing) {
     void supabase.removeChannel(existing);
+    (supabase.realtime as any)?._remove?.(existing);
   }
   return originalChannel(name, opts);
 };

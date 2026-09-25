@@ -21,6 +21,9 @@ web-build/
 *.p12
 *.key
 *.mobileprovision
+*.certSigningRequest
+*.crt
+credentials/
 *.orig.*
 
 # Logs

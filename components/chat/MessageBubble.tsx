@@ -73,77 +73,32 @@ export default function MessageBubble({
 
   // 3. Real Estate Property Listing Card
   if (message.messageKind === 'listing_card' && message.listingCard) {
-    return (
-      <ListingCardBubble
-        message={message}
-        isCurrentUser={isCurrentUser}
-        isStarred={isStarred}
-      />
-    );
+    return <ListingCardBubble message={message} isCurrentUser={isCurrentUser} isStarred={isStarred} />;
   }
 
   // 4. Interactive Inquiry Form
   if (message.messageKind === 'inquiry_form' && message.inquiryFormCard) {
-    return (
-      <InquiryFormBubble
-        message={message}
-        isCurrentUser={isCurrentUser}
-        onSendInquiryResponse={onSendInquiryResponse}
-      />
-    );
+    return <InquiryFormBubble message={message} isCurrentUser={isCurrentUser} onSendInquiryResponse={onSendInquiryResponse} />;
   }
 
   // 5. Submitted Inquiry Response Summary
   if (message.messageKind === 'inquiry_response' && message.inquiryResponseCard) {
-    return (
-      <InquiryResponseBubble
-        message={message}
-        isCurrentUser={isCurrentUser}
-      />
-    );
+    return <InquiryResponseBubble message={message} isCurrentUser={isCurrentUser} />;
   }
 
   // 6. Marketing Broadcast Announcement
-  if (
-    message.messageKind === 'broadcast' ||
-    message.structuredPayload?.is_broadcast
-  ) {
-    return (
-      <BroadcastBubble
-        message={message}
-        onPressMedia={onPressMedia}
-      />
-    );
+  if (message.messageKind === 'broadcast' || message.structuredPayload?.is_broadcast) {
+    return <BroadcastBubble message={message} onPressMedia={onPressMedia} />;
   }
 
   // 7. 3D Virtual Tour / Embed
-  if (
-    message.messageKind === 'embed' ||
-    message.structuredPayload?.card_kind === 'embed' ||
-    message.structuredPayload?.embed
-  ) {
-    return (
-      <EmbedBubble
-        message={message}
-        isCurrentUser={isCurrentUser}
-        isStarred={isStarred}
-      />
-    );
+  if (message.messageKind === 'embed' || message.structuredPayload?.card_kind === 'embed' || message.structuredPayload?.embed) {
+    return <EmbedBubble message={message} isCurrentUser={isCurrentUser} isStarred={isStarred} />;
   }
 
   // 8. Captured CRM Lead Card
-  if (
-    message.messageKind === 'lead' ||
-    message.structuredPayload?.card_kind === 'lead' ||
-    message.structuredPayload?.lead
-  ) {
-    return (
-      <LeadCardBubble
-        message={message}
-        isCurrentUser={isCurrentUser}
-        isStarred={isStarred}
-      />
-    );
+  if (message.messageKind === 'lead' || message.structuredPayload?.card_kind === 'lead' || message.structuredPayload?.lead) {
+    return <LeadCardBubble message={message} isCurrentUser={isCurrentUser} isStarred={isStarred} />;
   }
 
   // 9. Voice Note Audio Player

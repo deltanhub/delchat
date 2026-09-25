@@ -1,53 +1,11 @@
 import { Platform } from 'react-native';
+import {
+  CallKitOptions, IncomingCallPayload, OutgoingCallPayload,
+  CallKitActionCallbacks, CallKitState, defaultCallKitOptions,
+} from './callkitTypes';
+import { attachCallKitEventListeners } from './callkitEvents';
 
-export interface CallKitOptions {
-  appName: string;
-  imageName?: string;
-  ringtoneSound?: string;
-  maximumCallGroups?: string;
-  maximumCallsPerCallGroup?: string;
-  supportsVideo?: boolean;
-  includesCallsInRecents?: boolean;
-}
-
-export interface IncomingCallPayload {
-  callUuid: string;
-  handle: string; // Phone number, email, or user handle
-  contactName: string;
-  hasVideo?: boolean;
-  conversationId?: string;
-  extraPayload?: Record<string, unknown>;
-}
-
-export interface OutgoingCallPayload {
-  callUuid: string;
-  handle: string;
-  contactName: string;
-  isVideo?: boolean;
-}
-
-export interface CallKitActionCallbacks {
-  onAnswerCall?: (callUuid: string) => void;
-  onEndCall?: (callUuid: string) => void;
-  onToggleMute?: (callUuid: string, isMuted: boolean) => void;
-}
-
-export interface CallKitState {
-  isInitialized: boolean;
-  isNativeSupported: boolean;
-  activeCallUuid: string | null;
-  callbacks: CallKitActionCallbacks;
-}
-
-const defaultOptions: CallKitOptions = {
-  appName: 'DelChat',
-  imageName: 'callkit_logo',
-  ringtoneSound: 'call_ringtone.wav',
-  maximumCallGroups: '1',
-  maximumCallsPerCallGroup: '1',
-  supportsVideo: true,
-  includesCallsInRecents: true,
-};
+export * from './callkitTypes';
 
 class CallKitManager {
   private state: CallKitState = {
@@ -63,38 +21,29 @@ class CallKitManager {
     this.detectNativeModule();
   }
 
-  private detectNativeModule(): void {
+  public detectNativeModule(): void {
     if (Platform.OS !== 'ios') {
       this.state.isNativeSupported = false;
       return;
     }
 
     try {
-      // Conditionally require react-native-callkeep if installed in native iOS builds
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const callkeep = require('react-native-callkeep');
       this.nativeModule = callkeep?.default || callkeep;
       this.state.isNativeSupported = !!this.nativeModule;
     } catch {
-      // In Expo Go or builds without callkeep compiled, gracefully fall back
       this.nativeModule = null;
       this.state.isNativeSupported = false;
     }
   }
 
-  /**
-   * Initializes CallKit with application credentials and action callbacks.
-   */
   public async initializeCallKit(
     options: Partial<CallKitOptions> = {},
     callbacks: CallKitActionCallbacks = {}
   ): Promise<boolean> {
     this.state.callbacks = { ...this.state.callbacks, ...callbacks };
-
-    const mergedOptions: CallKitOptions = {
-      ...defaultOptions,
-      ...options,
-    };
+    const mergedOptions: CallKitOptions = { ...defaultCallKitOptions, ...options };
 
     if (this.state.isNativeSupported && this.nativeModule) {
       try {
@@ -110,25 +59,7 @@ class CallKitManager {
           },
         });
 
-        this.nativeModule.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
-          this.state.activeCallUuid = callUUID;
-          this.state.callbacks.onAnswerCall?.(callUUID);
-        });
-
-        this.nativeModule.addEventListener('endCall', ({ callUUID }: { callUUID: string }) => {
-          if (this.state.activeCallUuid === callUUID) {
-            this.state.activeCallUuid = null;
-          }
-          this.state.callbacks.onEndCall?.(callUUID);
-        });
-
-        this.nativeModule.addEventListener(
-          'didPerformSetMutedCallAction',
-          ({ muted, callUUID }: { muted: boolean; callUUID: string }) => {
-            this.state.callbacks.onToggleMute?.(callUUID, muted);
-          }
-        );
-
+        attachCallKitEventListeners(this.nativeModule, this.state);
         this.state.isInitialized = true;
         return true;
       } catch (err) {
@@ -136,39 +67,24 @@ class CallKitManager {
       }
     }
 
-    // Fallback in non-native or Expo Go environments
     this.state.isInitialized = true;
     return true;
   }
 
-  /**
-   * Reports an incoming call to iOS CallKit (or fallback state).
-   */
   public async reportIncomingCall(payload: IncomingCallPayload): Promise<string> {
     const { callUuid, handle, contactName, hasVideo = false } = payload;
     this.state.activeCallUuid = callUuid;
 
     if (this.state.isNativeSupported && this.nativeModule) {
       try {
-        await this.nativeModule.displayIncomingCall(
-          callUuid,
-          handle,
-          contactName,
-          'generic',
-          hasVideo
-        );
-        return callUuid;
+        await this.nativeModule.displayIncomingCall(callUuid, handle, contactName, 'generic', hasVideo);
       } catch (err) {
         console.warn('[CallKit] Native displayIncomingCall error:', err);
       }
     }
-
     return callUuid;
   }
 
-  /**
-   * Registers an outgoing call in CallKit and system recents.
-   */
   public async startOutgoingCall(payload: OutgoingCallPayload): Promise<string> {
     const { callUuid, handle, contactName, isVideo = false } = payload;
     this.state.activeCallUuid = callUuid;
@@ -180,13 +96,9 @@ class CallKitManager {
         console.warn('[CallKit] Native startCall error:', err);
       }
     }
-
     return callUuid;
   }
 
-  /**
-   * Reports call connected/active to CallKit.
-   */
   public async reportConnectedCall(callUuid?: string): Promise<void> {
     const targetUuid = callUuid || this.state.activeCallUuid;
     if (!targetUuid) return;
@@ -200,14 +112,9 @@ class CallKitManager {
     }
   }
 
-  /**
-   * Ends an active CallKit session.
-   */
   public async endCall(callUuid?: string): Promise<void> {
     const targetUuid = callUuid || this.state.activeCallUuid;
-    if (this.state.activeCallUuid === targetUuid) {
-      this.state.activeCallUuid = null;
-    }
+    if (this.state.activeCallUuid === targetUuid) this.state.activeCallUuid = null;
 
     if (targetUuid && this.state.isNativeSupported && this.nativeModule) {
       try {
@@ -218,9 +125,6 @@ class CallKitManager {
     }
   }
 
-  /**
-   * Synchronizes mute state with CallKit hardware indicator.
-   */
   public async setMuted(muted: boolean, callUuid?: string): Promise<void> {
     const targetUuid = callUuid || this.state.activeCallUuid;
     if (targetUuid && this.state.isNativeSupported && this.nativeModule) {
@@ -232,9 +136,6 @@ class CallKitManager {
     }
   }
 
-  /**
-   * Returns current CallKit manager status.
-   */
   public getCallKitStatus(): { isAvailable: boolean; isNative: boolean; activeCallUuid: string | null } {
     return {
       isAvailable: this.state.isInitialized,

@@ -1,37 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  Modal,
-  ActivityIndicator,
-  Animated,
-  Platform,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { View, Text, Modal, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../../constants/Colors';
-import { Typography } from '../../../constants/Typography';
 import { useColorScheme } from '../../useColorScheme';
 import ScalePressable from '../../ScalePressable';
-import * as Haptics from '../../../lib/haptics';
 import {
-  verifyChatPin,
-  setupChatPin,
-  authenticateWithBiometrics,
-  checkBiometricsAvailable,
-  getSavedChatPin,
-  isBiometricsEnabled,
-} from '../../../lib/chat-security-service';
+  ChatPinGateModalProps,
+  PinGateHeader,
+  PinDotsRow,
+  PinKeypadGrid,
+  usePinGateAuth,
+  styles,
+} from './pin_gate';
 
-interface ChatPinGateModalProps {
-  visible: boolean;
-  pinLength?: number;
-  isSetupRequired?: boolean;
-  onUnlocked: () => void;
-  onCancel?: () => void;
-}
-
+/**
+ * 500k CCU & Clean Architecture Pin Gate Specifications:
+ * - Wine brand theme: `#4a0f1f`
+ * - Spring keypad dynamics and haptic feedback
+ * - Dynamic PIN dots indicator and wrong-entry shake animation
+ * - Biometric unlock and auto-prompt on display
+ */
 export default function ChatPinGateModal({
   visible,
   pinLength = 4,
@@ -44,173 +32,21 @@ export default function ChatPinGateModal({
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
 
-  const [pin, setPin] = useState('');
-  const [setupStep, setSetupStep] = useState<'create' | 'confirm'>('create');
-  const [initialPin, setInitialPin] = useState('');
-  const [verifying, setVerifying] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [biometryInfo, setBiometryInfo] = useState<{
-    available: boolean;
-    biometryType: 'FaceID' | 'TouchID' | 'Biometrics' | null;
-  }>({ available: false, biometryType: null });
-  const [hasSavedPin, setHasSavedPin] = useState(false);
-
-  // Shake animation on wrong PIN entry
-  const shakeAnim = useRef(new Animated.Value(0)).current;
-
-  const targetLength = pinLength === 6 ? 6 : 4;
-
-  const handleBiometricUnlock = async () => {
-    if (verifying) return;
-    setVerifying(true);
-    setErrorMsg(null);
-    const res = await authenticateWithBiometrics();
-    setVerifying(false);
-
-    if (res.ok) {
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (e) {}
-      onUnlocked();
-    } else if (res.error && res.error !== 'Biometric authentication cancelled.') {
-      setErrorMsg(res.error);
-    }
-  };
-
-  useEffect(() => {
-    if (visible) {
-      setPin('');
-      setInitialPin('');
-      setSetupStep('create');
-      setErrorMsg(null);
-      setVerifying(false);
-
-      // Check for available biometrics and saved PIN
-      checkBiometricsAvailable().then(setBiometryInfo);
-      getSavedChatPin().then((saved) => {
-        const exists = Boolean(saved);
-        setHasSavedPin(exists);
-        if (exists && !isSetupRequired) {
-          isBiometricsEnabled().then((enabled) => {
-            if (enabled) {
-              handleBiometricUnlock();
-            }
-          });
-        }
-      });
-    }
-  }, [visible, isSetupRequired]);
-
-  const triggerShake = () => {
-    Animated.sequence([
-      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
-    ]).start();
-  };
-
-  const handleKeyPress = (digit: string) => {
-    if (pin.length >= targetLength || verifying) return;
-
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {}
-
-    setErrorMsg(null);
-    const nextPin = pin + digit;
-    setPin(nextPin);
-
-    if (nextPin.length === targetLength) {
-      if (isSetupRequired) {
-        handleSetupStep(nextPin);
-      } else {
-        submitUnlock(nextPin);
-      }
-    }
-  };
-
-  const handleDelete = () => {
-    if (pin.length === 0 || verifying) return;
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {}
-    setPin((p) => p.slice(0, -1));
-    setErrorMsg(null);
-  };
-
-  const handleSetupStep = async (enteredPin: string) => {
-    if (setupStep === 'create') {
-      setInitialPin(enteredPin);
-      setPin('');
-      setSetupStep('confirm');
-      try {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      } catch (e) {}
-    } else {
-      if (enteredPin !== initialPin) {
-        try {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        } catch (e) {}
-        triggerShake();
-        setErrorMsg('PINs do not match. Please try again.');
-        setPin('');
-        setSetupStep('create');
-        setInitialPin('');
-        return;
-      }
-
-      setVerifying(true);
-      setErrorMsg(null);
-      const res = await setupChatPin(initialPin, enteredPin);
-      setVerifying(false);
-
-      if (res.ok) {
-        try {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch (e) {}
-        setPin('');
-        onUnlocked();
-      } else {
-        try {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        } catch (e) {}
-        triggerShake();
-        setErrorMsg(res.error || 'Failed to set up PIN.');
-        setPin('');
-        setSetupStep('create');
-        setInitialPin('');
-      }
-    }
-  };
-
-  const submitUnlock = async (enteredPin: string) => {
-    setVerifying(true);
-    setErrorMsg(null);
-
-    const res = await verifyChatPin(enteredPin);
-    setVerifying(false);
-
-    if (res.ok) {
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (e) {}
-      setPin('');
-      onUnlocked();
-    } else {
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } catch (e) {}
-      triggerShake();
-      setErrorMsg(res.error || 'Incorrect chat PIN. Please try again.');
-      setPin('');
-    }
-  };
+  const {
+    pin,
+    targetLength,
+    setupStep,
+    verifying,
+    errorMsg,
+    biometryInfo,
+    hasSavedPin,
+    shakeAnim,
+    handleBiometricUnlock,
+    handleKeyPress,
+    handleDelete,
+  } = usePinGateAuth({ visible, pinLength, isSetupRequired, onUnlocked });
 
   if (!visible) return null;
-
-  const dots = Array.from({ length: targetLength }, (_, i) => i);
 
   return (
     <Modal
@@ -225,171 +61,49 @@ export default function ChatPinGateModal({
           styles.overlay,
           {
             backgroundColor: isDark ? '#000000' : '#f4f7fb',
-            paddingTop: insets.top + 24,
-            paddingBottom: insets.bottom + 16,
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 12,
           },
         ]}
       >
-        {/* Top Dismiss Button (if cancellable) */}
-        {onCancel && (
-          <View style={styles.headerBar}>
-            <ScalePressable onPress={onCancel} style={styles.dismissBtn}>
-              <Ionicons name="close" size={24} color={colors.text} />
-            </ScalePressable>
-          </View>
-        )}
+        <PinGateHeader
+          isSetupRequired={isSetupRequired}
+          setupStep={setupStep}
+          textColor={colors.text}
+          placeholderColor={colors.placeholder}
+          isDark={isDark}
+          onCancel={onCancel}
+        />
 
         <View style={styles.centerContainer}>
-          {/* Wine Brand Shield Header */}
-          <View
-            style={[
-              styles.shieldBox,
-              {
-                backgroundColor: isDark ? 'rgba(74, 15, 31, 0.35)' : '#f4e7eb',
-                borderColor: isDark ? '#4a0f1f' : '#e0cad0',
-              },
-            ]}
-          >
-            <Ionicons name="lock-closed" size={32} color="#4a0f1f" />
-          </View>
+          <PinDotsRow
+            targetLength={targetLength}
+            pinLength={pin.length}
+            shakeAnim={shakeAnim}
+            isDark={isDark}
+          />
 
-          <Text style={[styles.title, { color: colors.text }]}>
-            {isSetupRequired
-              ? setupStep === 'create'
-                ? 'Create your PIN for chats'
-                : 'Confirm your chat PIN'
-              : 'Enter your PIN to restore your chats'}
-          </Text>
-
-          <Text style={[styles.subtitle, { color: colors.placeholder }]}>
-            {isSetupRequired
-              ? setupStep === 'create'
-                ? 'Create this PIN the first time you open chats. It protects conversations separately from your main account login.'
-                : 'Re-enter your PIN to confirm and secure your account.'
-              : 'Enter your DeltanHub chat PIN to decrypt and restore your conversations.'}
-          </Text>
-
-          {/* Dynamic PIN Indicator Dots */}
-          <Animated.View
-            style={[
-              styles.dotsRow,
-              { transform: [{ translateX: shakeAnim }] },
-            ]}
-          >
-            {dots.map((idx) => {
-              const isFilled = pin.length > idx;
-              return (
-                <View
-                  key={idx}
-                  style={[
-                    styles.dot,
-                    {
-                      backgroundColor: isFilled ? '#4a0f1f' : 'transparent',
-                      borderColor: isFilled
-                        ? '#4a0f1f'
-                        : isDark
-                        ? 'rgba(255, 255, 255, 0.25)'
-                        : '#cbd5e1',
-                    },
-                  ]}
-                />
-              );
-            })}
-          </Animated.View>
-
-          {/* Error Message */}
           {errorMsg ? (
             <Text style={styles.errorText}>{errorMsg}</Text>
           ) : (
-            <View style={{ height: 20 }} />
+            <View style={{ height: 12 }} />
           )}
 
-          {/* Verifying Indicator */}
           {verifying && (
-            <ActivityIndicator
-              size="small"
-              color="#4a0f1f"
-              style={{ marginVertical: 6 }}
-            />
+            <ActivityIndicator size="small" color="#4a0f1f" style={{ marginVertical: 4 }} />
           )}
 
-          {/* Keypad Grid (3 columns x 4 rows) */}
-          <View style={styles.keypadContainer}>
-            {[
-              ['1', '2', '3'],
-              ['4', '5', '6'],
-              ['7', '8', '9'],
-              ['action', '0', 'backspace'],
-            ].map((row, rIdx) => (
-              <View key={rIdx} style={styles.keypadRow}>
-                {row.map((item) => {
-                  if (item === 'action') {
-                    if (biometryInfo.available && hasSavedPin && !isSetupRequired) {
-                      return (
-                        <ScalePressable
-                          key="bio"
-                          onPress={handleBiometricUnlock}
-                          containerStyle={styles.keyContainer}
-                          style={[
-                            styles.key,
-                            {
-                              backgroundColor: isDark ? '#141416' : '#ffffff',
-                              borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                            },
-                          ]}
-                        >
-                          <Ionicons
-                            name={biometryInfo.biometryType === 'FaceID' ? 'scan-outline' : 'finger-print-outline'}
-                            size={26}
-                            color="#4a0f1f"
-                          />
-                        </ScalePressable>
-                      );
-                    }
-                    return <View key="empty" style={styles.keyContainer} />;
-                  }
+          <PinKeypadGrid
+            biometryInfo={biometryInfo}
+            hasSavedPin={hasSavedPin}
+            isSetupRequired={isSetupRequired}
+            isDark={isDark}
+            colors={colors}
+            onBiometricUnlock={handleBiometricUnlock}
+            onKeyPress={handleKeyPress}
+            onDelete={handleDelete}
+          />
 
-                  if (item === 'backspace') {
-                    return (
-                      <ScalePressable
-                        key="del"
-                        onPress={handleDelete}
-                        containerStyle={styles.keyContainer}
-                        style={[
-                          styles.key,
-                          {
-                            backgroundColor: isDark ? '#141416' : '#ffffff',
-                            borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                          },
-                        ]}
-                      >
-                        <Ionicons name="backspace-outline" size={24} color={colors.text} />
-                      </ScalePressable>
-                    );
-                  }
-
-                  return (
-                    <ScalePressable
-                      key={item}
-                      onPress={() => handleKeyPress(item)}
-                      containerStyle={styles.keyContainer}
-                      style={[
-                        styles.key,
-                        {
-                          backgroundColor: isDark ? '#141416' : '#ffffff',
-                          borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : '#e5e7eb',
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.keyDigit, { color: colors.text }]}>{item}</Text>
-                    </ScalePressable>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-
-          {/* Skip for Now Action Button */}
           {onCancel && (
             <ScalePressable onPress={onCancel} style={styles.skipButton}>
               <Text style={[styles.skipButtonText, { color: colors.placeholder }]}>
@@ -403,119 +117,4 @@ export default function ChatPinGateModal({
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'space-between',
-  },
-  headerBar: {
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    height: 40,
-  },
-  dismissBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-  },
-  shieldBox: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginHorizontal: 16,
-    fontFamily: Typography.fontFamily,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginVertical: 20,
-  },
-  dot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-  },
-  errorText: {
-    color: '#dc2626',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6,
-    textAlign: 'center',
-    fontFamily: Typography.fontFamily,
-  },
-  keypadContainer: {
-    width: '100%',
-    maxWidth: 280,
-    marginTop: 8,
-  },
-  keypadRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    width: '100%',
-  },
-  keyContainer: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-  },
-  key: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  keyDigit: {
-    fontSize: 26,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-  },
-  skipButton: {
-    marginTop: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  skipButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-  },
-});
+export { PinGateHeader, PinDotsRow, PinKeypadGrid, usePinGateAuth };

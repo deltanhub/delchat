@@ -1,10 +1,10 @@
 import React from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { View, Text } from 'react-native';
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { Typography } from '../../../constants/Typography';
 import { useColorScheme } from '../../useColorScheme';
 import { ChatMessage, formatMsgTime } from './types';
+import { styles } from './system/styles';
 
 interface SystemMessageBubbleProps {
   message: ChatMessage;
@@ -30,9 +30,7 @@ export default function SystemMessageBubble({ message, isCurrentUser }: SystemMe
     const isOutgoing =
       typeof isCurrentUser === 'boolean'
         ? isCurrentUser
-        : callLog.initiatedByUserId
-        ? callLog.initiatedByUserId === message.senderUserId
-        : false;
+        : callLog.initiatedByUserId ? callLog.initiatedByUserId === message.senderUserId : false;
     const isVideo = callLog.callMode === 'video';
     const status = callLog.callStatus;
 
@@ -66,14 +64,10 @@ export default function SystemMessageBubble({ message, isCurrentUser }: SystemMe
     const displayTitle = `${directionLabel} ${callTypeLabel}`;
 
     const iconBg = isRed
-      ? isDark
-        ? 'rgba(239, 68, 68, 0.15)'
-        : '#fef2f2'
-      : isDark
-      ? 'rgba(34, 197, 94, 0.15)'
-      : '#f0fdf4';
+      ? (isDark ? 'rgba(239, 68, 68, 0.15)' : '#fef2f2')
+      : (isDark ? 'rgba(34, 197, 94, 0.15)' : '#f0fdf4');
 
-    const iconColor = isRed ? (isDark ? '#f87171' : '#ef4444') : isDark ? '#4ade80' : '#16a34a';
+    const iconColor = isRed ? (isDark ? '#f87171' : '#ef4444') : (isDark ? '#4ade80' : '#16a34a');
 
     return (
       <Animated.View
@@ -102,10 +96,7 @@ export default function SystemMessageBubble({ message, isCurrentUser }: SystemMe
           {/* Call Details */}
           <View style={styles.textContainer}>
             <Text
-              style={[
-                styles.callTitle,
-                { color: isDark ? '#f1f5f9' : '#141c2b' },
-              ]}
+              style={[styles.callTitle, { color: isDark ? '#f1f5f9' : '#141c2b' }]}
               numberOfLines={1}
             >
               {displayTitle}
@@ -113,7 +104,7 @@ export default function SystemMessageBubble({ message, isCurrentUser }: SystemMe
             <Text
               style={[
                 styles.callSubtitle,
-                { color: isRed ? (isDark ? '#f87171' : '#ef4444') : isDark ? '#94a3b8' : '#7b6570' },
+                { color: isRed ? (isDark ? '#f87171' : '#ef4444') : (isDark ? '#94a3b8' : '#7b6570') },
               ]}
             >
               {statusText}
@@ -146,65 +137,3 @@ export default function SystemMessageBubble({ message, isCurrentUser }: SystemMe
     </Animated.View>
   );
 }
-
-const styles = StyleSheet.create({
-  systemContainer: {
-    alignItems: 'center',
-    marginVertical: 8,
-    paddingHorizontal: 16,
-    width: '100%',
-  },
-  systemBubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 12,
-    maxWidth: '90%',
-  },
-  systemText: {
-    fontSize: Typography.sizes.xs,
-    fontWeight: Typography.weights.medium,
-    textAlign: 'center',
-  },
-  callCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    maxWidth: '92%',
-    shadowColor: '#4a0f1f',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  iconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  textContainer: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: 'center',
-  },
-  callTitle: {
-    fontSize: Typography.sizes.sm,
-    fontWeight: Typography.weights.bold,
-  },
-  callSubtitle: {
-    fontSize: Typography.sizes.xs,
-    fontWeight: Typography.weights.semibold,
-    marginTop: 2,
-  },
-  timeText: {
-    fontSize: 10,
-    fontWeight: Typography.weights.medium,
-    marginLeft: 12,
-    alignSelf: 'center',
-  },
-});

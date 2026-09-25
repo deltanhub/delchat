@@ -890,3 +890,156 @@
   - Master System Audit: `node scripts/run_master_system_audit.js` -> 136/136 tests passing (100%).
 * **What Is Left To Be Done**:
   - All 4 feedback phases are 100% complete and verified.
+
+### [Log Entry: 2026-09-08] Android Expo Notifications Custom Sound 'default' Remediation
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - `delchat/lib/voip/connectionService.ts`:
+    - Removed `sound: 'default'` from `Notifications.setNotificationChannelAsync(VOIP_NOTIFICATION_CHANNEL_ID, ...)`. On Android, `sound` specifies a custom sound filename (e.g. `sound_file.wav`); omitting `sound` correctly falls back to `Settings.System.DEFAULT_NOTIFICATION_URI` without attempting to find a non-existent asset literally named `default`.
+    - Removed redundant `sound` property from Android `scheduleNotificationAsync` since heads-up VoIP call sound is governed by the Android notification channel (`VOIP_NOTIFICATION_CHANNEL_ID`).
+  - `delchat/lib/notifications.ts`:
+    - Added defensive interception in the `Notifications` proxy for `setNotificationChannelAsync`: automatically strips `sound: 'default'` before delegating to the native module, guaranteeing immunity across the entire codebase.
+  - `delchat/app.json`:
+    - Registered `./assets/sounds/incoming_ring.wav` and `./assets/sounds/ringback.wav` in the `expo-notifications` config plugin `sounds` array, ensuring native audio assets are bundled into Android's `res/raw` directory and iOS main bundle on native compilation.
+* **Why It Was Done**:
+  - In `expo-notifications` Android module (`AndroidXNotificationsChannelManager.java` & `NotificationChannelManagerModule.kt`), setting `sound: 'default'` on a notification channel causes Android to check `mSoundResolver.resourceExists("default")`. Because `default` is not a resource file, `customSoundExists` returns `false`, firing `appContext.jsLogger.error("expo-notifications: Custom sound 'default' not found in native app...")` which triggers the red LogBox error screen on device launch.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 64/64 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master Leads Architecture: `node scripts/test_master_leads_architecture.js` -> 42/42 tests passing (100%).
+  - Call Ringing Engine: `node scripts/test_call_ringing_engine.js` -> 29/29 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 141/141 tests passing (100%).
+* **What Is Left To Be Done**:
+  - Ready for ongoing live testing on physical devices.
+
+### [Log Entry: 2026-09-08] Android & iOS Native Development Builds Compiled & Distributed Under Aeosa
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - **Account & Project Scope**:
+    - Re-linked Expo project under parent entity `@aeosa/delchat` (`98aee785-44ef-446e-9899-2b3c249b0866`).
+    - Configured `"cli": { "appVersionSource": "local" }` in `eas.json`.
+  - **Android Development Build**:
+    - Compiled standalone Android `.apk` via EAS Build (`expo-dev-client`).
+    - Artifact: `https://expo.dev/artifacts/eas/DZtbznJ_BrqLqX9_UL9eRiarOCY3D-zEOyTeLnTuRSI.apk` (Build ID: `4364c530-404f-4345-9179-3ff8b6f2056c`).
+    - Successfully installed and verified on physical Android device.
+  - **Apple Developer & iOS Provisioning**:
+    - Registered physical iPhone `Deltan` (UDID: `00008101-001E41260AB9003A`) under Apple Team `AEOSA PLATFORMS LTD` (Team ID: `ASJYR6MJM7`).
+    - Registered App ID `com.deltanhub.delchat` with Push Notifications and Associated Domains.
+    - Generated CSR via local MinGW64 OpenSSL engine and signed Apple Distribution Certificate (Serial: `764D699BDD694CD1E2B7BD18B9BDD0E1`).
+    - Generated Ad-Hoc Provisioning Profile (`490dc917-1c7e-46ea-8e67-4eb3f8b641ae`) provisioned for iPhone `Deltan`.
+    - Generated APNs Push Key (`66WFR9K732`) and connected App Store Connect API Key (`6B4B2Y38AL`).
+    - Remediated OpenSSL 3 PBES2 macOS Keychain import issue by exporting PKCS#12 (`delchat_distribution.p12`) using the legacy cipher provider (`-legacy`).
+  - **iOS Development Build**:
+    - Compiled standalone Ad-Hoc `.ipa` via EAS Build (`expo-dev-client`) on Apple Silicon cloud builder.
+    - Artifact: `https://expo.dev/artifacts/eas/BuyzfsR_AdiAXMmlzmfK7rkE0_awdK90A6-1oEvJevw.ipa` (Build ID: `b9af1add-1439-4779-9a0b-8068ef34a631`).
+    - Status: `FINISHED` (Exit Code 0).
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 64/64 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+### [Log Entry: 2026-09-15] Clean Architecture & Monolithic File Deconstruction: Batch 3 (Options 22 to 25) Completed & Certified
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - **Option 22 (`components/leads/ManualLeadsView.tsx`)**: Slashed from 393 lines down to **97 lines** ($-75.3\%$). Deconstructed into 9 modular sub-components in `components/leads/manual_leads/`, all $\le 200$ lines.
+  - **Option 23 (`components/chat/PropertyCatalogModal.tsx`)**: Slashed from 385 lines down to **108 lines** ($-71.9\%$). Deconstructed into 9 modular sub-components in `components/chat/property_catalog/`, all $\le 200$ lines.
+  - **Option 24 (`components/leads/AddManualLeadModal.tsx`)**: Slashed from 363 lines down to **105 lines** ($-71.1\%$). Deconstructed into 9 modular sub-components in `components/leads/add_lead/`, all $\le 200$ lines.
+  - **Option 25 (`components/chat/ReportModal.tsx`)**: Slashed from 359 lines down to **117 lines** ($-67.4\%$). Deconstructed into 9 modular sub-components in `components/chat/report/`, all $\le 200$ lines.
+  - **Modular Architecture & Deep Live Simulation Test Suites**:
+    - `scripts/test_manual_leads_modular_architecture.js` & `test_manual_leads_deep_live.js`
+    - `scripts/test_property_catalog_modular_architecture.js` & `test_property_catalog_deep_live.js`
+    - `scripts/test_add_manual_lead_modular_architecture.js` & `test_add_manual_lead_deep_live.js`
+    - `scripts/test_report_modular_architecture.js` & `test_report_deep_live.js`
+  - **Master System Audit**: Added Tiers 42, 43, 44, and 45 to `scripts/run_master_system_audit.js`.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0.
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 64/64 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master Leads Architecture: `node scripts/test_master_leads_architecture.js` -> 42/42 tests passing (100%).
+  - VoIP & WebRTC Calling: `node scripts/test_call_functionality.js` -> 49/49 tests passing (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> 464/464 criteria passed across 45 Tiers (100%).
+
+---
+
+### [Log Entry: 2026-09-15] Modular Architecture Deconstruction Batches 1 to 4 Completed & Certified (All Files <= 150 LOC)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - **Batch 1 (Calling Domain Hooks)**:
+    - `hooks/call/useCallSignaling.ts`: Slashed to **35 lines** (4 sub-modules in `hooks/call/signaling/`).
+    - `hooks/call/useCallMedia.ts`: Slashed to **44 lines** (3 sub-modules in `hooks/call/media/`).
+    - `hooks/useCallSession.ts`: Slashed to **147 lines** (8 sub-modules in `hooks/call/session/`).
+    - Added Tiers 59, 60, and 61 to master system audit.
+  - **Batch 2 (Core Domain Hooks)**:
+    - `hooks/useThreadPresence.ts`: Slashed to **63 lines** (3 sub-modules in `hooks/presence/`).
+    - `hooks/inbox/useInboxActions.ts`: Slashed to **53 lines** (3 sub-modules in `hooks/inbox/actions/`).
+    - `hooks/useCompose.ts`: Slashed to **79 lines** (3 sub-modules in `hooks/compose/`).
+    - `hooks/crm/useMasterLeadDetails.ts`: Slashed to **120 lines** (4 sub-modules in `hooks/crm/lead_details/`).
+    - `hooks/inbox/useInboxData.ts`: Slashed to **125 lines** (4 sub-modules in `hooks/inbox/data/`).
+    - `hooks/useStarredMessages.ts`: Slashed to **65 lines** (4 sub-modules in `hooks/starred/`).
+    - Added Tiers 62 through 67 to master system audit.
+  - **Batch 3 (Screen Presenters)**:
+    - `app/compose.tsx`: Slashed to **136 lines** ($\le 150$).
+    - `app/thread/[id].tsx`: Slashed to **148 lines** ($\le 150$). Extracted `ThreadComposerHost.tsx` (73 lines).
+    - Verified `app/(tabs)/index.tsx` at **145 lines** and `app/call/[id].tsx` at **70 lines**.
+  - **Batch 7 (Primary App Screens & Navigation Modularization)**:
+    - Slashed all primary screens and navigation in `app/` to strictly $\le 150$ lines of code: `calls.tsx` (81 LOC), `leads.tsx` (137 LOC), `_layout.tsx` (135 LOC), `auth.tsx` (95 LOC).
+    - Extracted modular sub-modules: `components/chat/recent_calls/CallsHeader.tsx` (88 LOC), `components/leads/tabs/LeadsContentSwitcher.tsx` (92 LOC), `components/leads/tabs/CrmSectionSwitcher.tsx` (117 LOC), `components/navigation/TabBarItem.tsx` (58 LOC), `components/auth/AuthForm.tsx` (98 LOC), etc.
+    - Added Tier 77 to Master System Verification Audit.
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (0 errors).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 tests passing (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 64/64 tests passing (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% passing.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 tests passing (100%).
+  - Master Leads Architecture: `node scripts/test_master_leads_architecture.js` -> 42/42 tests passing (100%).
+  - Call Functionality Suite: `node scripts/test_call_functionality.js` -> 49/49 tests passing (100%).
+  - Batch 7 Screens Modular Audit: `node scripts/test_batch7_screens_modular_architecture.js` -> 23/23 tests passing (100%).
+  - Batch 7 Screens Live Simulation: `node scripts/test_batch7_screens_deep_live.js` -> 5/5 tests passing (100%).
+### [Log Entry: 2026-09-16] Modular Architecture Deconstruction Batches 8 to 10 Completed & Certified (All Files <= 150 LOC, 80 Tiers, 872/872 Tests)
+* **Author**: Antigravity Senior Systems Architect & Mobile Lead
+* **What Was Done**:
+  - **Batch 8 (Inquiries, Leads Data & CRM Master Lead Sub-Views)**:
+    - Modularized `components/inquiries/data/` (4 files $\le 150$ LOC), `useInquiriesData.ts` (90 LOC), `components/inquiries/responses/` (5 files $\le 150$ LOC).
+    - Modularized `components/leads/data/` (5 files $\le 150$ LOC), `useLeadsData.ts` (142 LOC).
+    - Modularized Master Lead CRM sub-views: `historyStyles.ts` (18 LOC), `MasterLeadHistoryView.tsx` (141 LOC), `summaryStyles.ts` (28 LOC), `MasterLeadSummaryMetrics.tsx` (68 LOC), `MasterLeadSummaryView.tsx` (129 LOC), `notesStyles.ts` (29 LOC), `MasterLeadNoteComposer.tsx` (92 LOC), `MasterLeadNotesView.tsx` (121 LOC), `subHeaderStyles.ts` (91 LOC), `MasterLeadSubHeader.tsx` (122 LOC).
+    - Added Tier 78 to Master System Verification Audit.
+  - **Batch 9 (Call Modal, Calling Stages & PiP Window)**:
+    - Slashed `components/chat/CallModal.tsx` from 498 LOC down to **139 LOC**.
+    - Extracted `CallAudioStage.tsx` (98 LOC) & `audioStageStyles.ts` (63 LOC).
+    - Extracted `CallVideoStage.tsx` (104 LOC) & `videoStageStyles.ts` (96 LOC).
+    - Extracted `CallPipWindow.tsx` (88 LOC), `usePipDrag.ts` (57 LOC), and `pipStyles.ts` (74 LOC).
+    - Added Tier 79 to Master System Verification Audit.
+  - **Batch 10 (Core Infrastructure Services in lib/)**:
+    - Slashed all monolithic infrastructure services to strictly $\le 150$ LOC across 37 sub-modules:
+      - `lib/offline-engine.ts` (84 LOC) + `lib/offline/` (5 files $\le 150$ LOC).
+      - `lib/chat-security-service.ts` (31 LOC) + `lib/chat_security/` (7 files $\le 150$ LOC).
+      - `lib/sync-coordinator.ts` (69 LOC) + `lib/sync/` (7 files $\le 150$ LOC).
+      - `lib/webrtc/mediaEngine.ts` (146 LOC) + `lib/webrtc/` (9 files $\le 150$ LOC).
+      - `lib/webrtc-signaling.ts` (124 LOC), `lib/auth.ts` (49 LOC), `lib/voip/callkit.ts` (149 LOC).
+    - Added Tier 80 to Master System Verification Audit.
+    - Verified **100% of files in the entire repository are strictly $\le 150$ LOC** (0 over limit).
+* **Live Smoke Test Evidence**:
+  - Static Typecheck: `cmd /c npx tsc --noEmit` -> Exit Code 0 (0 errors).
+  - Batch 10 Modular Services Suite: `node scripts/test_batch10_services_modular_architecture.js` -> 37/37 PASSED (100%).
+  - WebRTC Media Engine Suite: `node scripts/test_webrtc_media_engine.js` -> 30/30 PASSED (100%).
+  - Video Upgrade Suite: `node scripts/test_call_video_upgrade.js` -> 27/27 PASSED (100%).
+  - Comprehensive Audit: `node scripts/run_comprehensive_audit.js` -> 62/62 PASSED (100%).
+  - Clean Architecture Suite: `node scripts/test_clean_architecture.js` -> 64/64 PASSED (100%).
+  - Presence Sync Suite: `node scripts/test_presence_sync.js` -> 100% PASSED.
+  - Role Permissions Suite: `node scripts/test_role_permissions.js` -> 10/10 PASSED (100%).
+  - Master Leads Architecture: `node scripts/test_master_leads_architecture.js` -> 42/42 PASSED (100%).
+  - Master System Audit: `node scripts/run_master_system_audit.js` -> **872/872 criteria passed across all 80 Tiers (100% Certified Operational, exit code 0)**.
+* **What Is Left To Be Done**:
+  - Standalone Production Cloud Compilation via EAS:
+    - Android: `eas build -p android --profile production`
+    - iOS: `eas build -p ios --profile production`
+
+
+
+

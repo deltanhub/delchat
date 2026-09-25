@@ -95,6 +95,18 @@ export const Notifications: typeof ExpoNotificationsType = new Proxy(
         if (prop in rawNotificationsModule || rawRecord[prop] !== undefined) {
           const val = rawRecord[prop];
           if (typeof val === 'function') {
+            if (prop === 'setNotificationChannelAsync') {
+              return (channelId: string, channelOptions: any) => {
+                // Defensive sanitization: On Android, passing sound: 'default' triggers
+                // "Custom sound 'default' not found in native app" because native Android expects
+                // a custom sound filename. Omitting sound defaults to Settings.System.DEFAULT_NOTIFICATION_URI.
+                if (channelOptions && channelOptions.sound === 'default') {
+                  const { sound, ...rest } = channelOptions;
+                  return (rawNotificationsModule as any).setNotificationChannelAsync(channelId, rest);
+                }
+                return (val as (...args: unknown[]) => unknown).call(rawNotificationsModule, channelId, channelOptions);
+              };
+            }
             return (val as (...args: unknown[]) => unknown).bind(rawNotificationsModule);
           }
           return val;

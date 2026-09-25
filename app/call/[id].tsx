@@ -16,11 +16,22 @@ export { resetAudioAfterCall } from '../../lib/webrtc-audio';
 export { callRepository } from '../../lib/repositories';
 
 export default function CallScreen() {
-  const { id: conversationId, kind = 'audio', role = 'initiator', callId } = useLocalSearchParams<{
+  const {
+    id: conversationId,
+    kind = 'audio',
+    role = 'initiator',
+    callId,
+    partnerUserId,
+    partnerName,
+    partnerAvatarUrl,
+  } = useLocalSearchParams<{
     id: string;
     kind?: 'audio' | 'video';
     role?: 'initiator' | 'receiver';
     callId?: string;
+    partnerUserId?: string;
+    partnerName?: string;
+    partnerAvatarUrl?: string;
   }>();
 
   const session = useCallSession({
@@ -28,6 +39,9 @@ export default function CallScreen() {
     kind,
     role,
     initialCallId: callId,
+    initialPartnerUserId: partnerUserId,
+    initialPartnerName: partnerName,
+    initialPartnerAvatarUrl: partnerAvatarUrl,
   });
 
   return (

@@ -1,10 +1,10 @@
 import React from 'react';
-import { StyleSheet, View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../../constants/Colors';
-import { Typography } from '../../../constants/Typography';
 import { useColorScheme } from '../../useColorScheme';
 import Pressable from '../../ScalePressable';
+import { styles } from './subHeaderStyles';
 import type { ChatConversation } from '../ConversationRow';
 
 export type MasterLeadSubTab = 'feed' | 'details' | 'notes' | 'history' | 'reports' | 'activity';
@@ -50,18 +50,11 @@ export default function MasterLeadSubHeader({
     <View style={[styles.container, { borderColor: colors.border, backgroundColor: colors.background }]}>
       {/* Pills Row: Status & Agent */}
       <View style={styles.pillsRow}>
-        {/* Status Pill */}
         <View style={styles.col}>
           <Text style={[styles.label, { color: colors.placeholder }]}>STATUS</Text>
           <Pressable
             onPress={onPressStatus}
-            style={[
-              styles.pill,
-              {
-                backgroundColor: isDark ? '#2c0810' : '#fdf2f4',
-                borderColor: isDark ? '#4a0f1f' : '#efe3e8',
-              },
-            ]}
+            style={[styles.pill, { backgroundColor: isDark ? '#2c0810' : '#fdf2f4', borderColor: isDark ? '#4a0f1f' : '#efe3e8' }]}
           >
             <View style={[styles.statusDot, { backgroundColor: isDark ? '#f4a5b8' : colors.primary }]} />
             <Text style={[styles.pillText, { color: isDark ? '#ffffff' : '#4a0f1f' }]} numberOfLines={1}>
@@ -71,18 +64,11 @@ export default function MasterLeadSubHeader({
           </Pressable>
         </View>
 
-        {/* Assigned Agent Pill */}
         <View style={styles.col}>
           <Text style={[styles.label, { color: colors.placeholder }]}>ASSIGNED AGENT</Text>
           <Pressable
             onPress={onPressAgent}
-            style={[
-              styles.pill,
-              {
-                backgroundColor: isDark ? '#1c1c1e' : '#fdf2f4',
-                borderColor: isDark ? '#2c2c2e' : '#efe3e8',
-              },
-            ]}
+            style={[styles.pill, { backgroundColor: isDark ? '#1c1c1e' : '#fdf2f4', borderColor: isDark ? '#2c2c2e' : '#efe3e8' }]}
           >
             <View style={[styles.avatar, { backgroundColor: isDark ? '#2c0810' : '#4a0f1f' }]}>
               <Text style={styles.avatarText}>{agentInitials}</Text>
@@ -116,18 +102,12 @@ export default function MasterLeadSubHeader({
             <Pressable
               key={tab.key}
               onPress={() => onChangeSubTab(tab.key)}
-              style={[
-                styles.tabBtn,
-                isActive && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
-              ]}
+              style={[styles.tabBtn, isActive && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
             >
               <Text
                 style={[
                   styles.tabBtnText,
-                  {
-                    color: isActive ? colors.primary : colors.placeholder,
-                    fontWeight: isActive ? '700' : '500',
-                  },
+                  { color: isActive ? colors.primary : colors.placeholder, fontWeight: isActive ? '700' : '500' },
                 ]}
               >
                 {tab.label}
@@ -139,91 +119,3 @@ export default function MasterLeadSubHeader({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    borderBottomWidth: 1,
-    paddingTop: 8,
-  },
-  pillsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    gap: 12,
-    marginBottom: 8,
-  },
-  col: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 10,
-    fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-    marginBottom: 4,
-    letterSpacing: 0.5,
-  },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontFamily: Typography.fontFamily,
-    flex: 1,
-  },
-  avatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 6,
-  },
-  avatarText: {
-    color: '#ffffff',
-    fontSize: 9.5,
-    fontWeight: '700',
-  },
-  handoffBox: {
-    marginHorizontal: 16,
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  handoffTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: Typography.fontFamily,
-    marginBottom: 2,
-  },
-  handoffText: {
-    fontSize: 12,
-    fontFamily: Typography.fontFamily,
-    lineHeight: 16,
-  },
-  tabsRow: {
-    borderBottomWidth: 1,
-  },
-  tabsScroll: {
-    paddingHorizontal: 16,
-    gap: 16,
-  },
-  tabBtn: {
-    paddingVertical: 8,
-  },
-  tabBtnText: {
-    fontSize: 13,
-    fontFamily: Typography.fontFamily,
-  },
-});

@@ -3,6 +3,7 @@ import { setAudioModeAsync } from 'expo-audio';
 export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
 
 let _currentAudioRoute: AudioRoute = 'earpiece';
+let _inCallManagerActive = false;
 
 let inCallManager: any = null;
 try {
@@ -29,6 +30,10 @@ export async function setAudioRoute(route: AudioRoute): Promise<void> {
   // 1. Native InCallManager hardware bridge (for native builds)
   if (inCallManager) {
     try {
+      if (!_inCallManagerActive) {
+        inCallManager.start({ media: route === 'speaker' ? 'video' : 'audio', auto: false });
+        _inCallManagerActive = true;
+      }
       const isSpeaker = route === 'speaker';
       inCallManager.setSpeakerphoneOn(isSpeaker);
       if (typeof inCallManager.setForceSpeakerphoneOn === 'function') {
@@ -67,9 +72,10 @@ export async function setAudioRoute(route: AudioRoute): Promise<void> {
 export async function configureAudioForCall(options: { isSpeakerOn?: boolean; route?: AudioRoute } = { isSpeakerOn: false }): Promise<void> {
   const targetRoute: AudioRoute = options.route || (options.isSpeakerOn ? 'speaker' : 'earpiece');
 
-  if (inCallManager) {
+  if (inCallManager && !_inCallManagerActive) {
     try {
       inCallManager.start({ media: options.isSpeakerOn ? 'video' : 'audio', auto: false });
+      _inCallManagerActive = true;
     } catch (err) {
       console.warn('[WebRTC Audio] InCallManager start error:', err);
     }
@@ -91,9 +97,10 @@ export async function setSpeakerphone(isSpeakerOn: boolean): Promise<void> {
 export async function resetAudioAfterCall(): Promise<void> {
   _currentAudioRoute = 'earpiece';
 
-  if (inCallManager) {
+  if (inCallManager && _inCallManagerActive) {
     try {
       inCallManager.stop();
+      _inCallManagerActive = false;
     } catch (err) {
       console.warn('[WebRTC Audio] InCallManager stop error:', err);
     }

@@ -1,0 +1,30 @@
+import { StyleSheet } from 'react-native';
+import { Typography } from '../../../constants/Typography';
+
+export const styles = StyleSheet.create({
+  filterScroll: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 8 },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(128,128,128,0.12)' },
+  filterChipText: { fontSize: Typography.sizes.xs, fontFamily: Typography.fontFamily, fontWeight: '600' },
+  centerContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingTop: 60 },
+  emptyTitle: { fontSize: Typography.sizes.md, fontWeight: '700', fontFamily: Typography.fontFamily, marginTop: 14 },
+  emptySubtitle: { fontSize: Typography.sizes.sm, fontFamily: Typography.fontFamily, textAlign: 'center', marginTop: 6, lineHeight: 20 },
+  metricGrid: { flexDirection: 'row', paddingHorizontal: 14, paddingTop: 12, gap: 8 },
+  metricTile: { flex: 1, borderRadius: 14, borderWidth: 1, padding: 10, alignItems: 'center' },
+  metricIconBox: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  metricValue: { fontSize: 16, fontWeight: '800', fontFamily: Typography.fontFamily },
+  metricLabel: { fontSize: 9, fontWeight: '600', fontFamily: Typography.fontFamily, marginTop: 2, textAlign: 'center' },
+  actionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, gap: 10, borderBottomWidth: 1 },
+  searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, height: 38 },
+  searchInput: { flex: 1, fontSize: 13, fontFamily: Typography.fontFamily, padding: 0 },
+  addLeadBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, height: 38, borderRadius: 12 },
+  addLeadBtnText: { fontSize: 13, fontWeight: '700', color: '#ffffff', fontFamily: Typography.fontFamily },
+  card: { borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 12 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardTitle: { fontSize: 15, fontWeight: '700', fontFamily: Typography.fontFamily },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  statusPillText: { fontSize: 10, fontWeight: '700', fontFamily: Typography.fontFamily },
+  cardMeta: { fontSize: 12, marginTop: 4, fontFamily: Typography.fontFamily },
+  budgetBadgeText: { fontSize: 12, fontWeight: '700', marginTop: 4, fontFamily: Typography.fontFamily },
+  cardFooterSimple: { marginTop: 10, paddingTop: 8, borderTopWidth: 1 },
+  timestampText: { fontSize: 10, marginTop: 8, fontFamily: Typography.fontFamily },
+});

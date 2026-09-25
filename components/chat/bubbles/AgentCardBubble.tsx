@@ -1,82 +1,33 @@
 import React from 'react';
-import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
+import { View, Text } from 'react-native';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, type Href } from 'expo-router';
 import Colors from '../../../constants/Colors';
-import { Typography } from '../../../constants/Typography';
 import { useColorScheme } from '../../useColorScheme';
 import { ChatMessage, formatMsgTime } from './types';
+import {
+  AssignedAgentCardData,
+  parseAssignedAgentCard,
+  styles,
+  AgentCardContactBox,
+  AgentCardActionButtons,
+} from './agent_card';
 
-export interface AssignedAgentCardData {
-  actionLabel: string;
-  agencyName: string | null;
-  assignedByName: string | null;
-  agent: {
-    userId: string;
-    fullName: string;
-    subtitle: string;
-    avatarUrl: string | null;
-    email: string | null;
-    phone: string | null;
-    profileHref: string;
-  };
-}
-
-export function parseAssignedAgentCard(message: ChatMessage): AssignedAgentCardData | null {
-  const payload = message.structuredPayload;
-  if (!payload && message.messageKind !== 'agent_card') {
-    return null;
-  }
-
-  if (payload?.card_kind === 'assigned_agent') {
-    const agent = payload.agent || {};
-    return {
-      actionLabel: payload.actionLabel || 'assigned',
-      agencyName: payload.agencyName || null,
-      assignedByName: payload.assignedByName || null,
-      agent: {
-        userId: agent.userId || '',
-        fullName: agent.fullName || 'Assigned Agent',
-        subtitle: agent.subtitle || 'Assigned agent',
-        avatarUrl: agent.avatarUrl || null,
-        email: agent.email || null,
-        phone: agent.phone || null,
-        profileHref: agent.profileHref || `/agents/${agent.userId}`,
-      },
-    };
-  }
-
-  if (payload?.agentCard || message.messageKind === 'agent_card') {
-    const agent = payload?.agentCard || {};
-    return {
-      actionLabel: agent.actionLabel || 'assigned',
-      agencyName: agent.agencyName || null,
-      assignedByName: agent.assignedBy || null,
-      agent: {
-        userId: agent.agentUserId || agent.userId || '',
-        fullName: agent.agentName || agent.fullName || 'Assigned Agent',
-        subtitle: agent.agentRole || agent.subtitle || 'Assigned agent',
-        avatarUrl: agent.agentAvatar || agent.avatarUrl || null,
-        email: agent.agentEmail || agent.email || null,
-        phone: agent.agentPhone || agent.phone || null,
-        profileHref: `/agents/${agent.agentUserId || agent.userId}`,
-      },
-    };
-  }
-
-  return null;
-}
-
-interface AgentCardBubbleProps {
+export interface AgentCardBubbleProps {
   card: AssignedAgentCardData;
   message: ChatMessage;
   isStarred?: boolean;
   onReportAgent?: (card: AssignedAgentCardData) => void;
 }
 
-export default function AgentCardBubble({ card, message, isStarred = false, onReportAgent }: AgentCardBubbleProps) {
-  const router = useRouter();
+export { AssignedAgentCardData, parseAssignedAgentCard };
+
+export default function AgentCardBubble({
+  card,
+  message,
+  isStarred = false,
+  onReportAgent,
+}: AgentCardBubbleProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
@@ -102,65 +53,23 @@ export default function AgentCardBubble({ card, message, isStarred = false, onRe
           {card.agencyName ?? 'The agency'} added this agent to the thread so the buyer can review the profile and continue the conversation before direct outreach.
         </Text>
 
-        <View style={styles.agentCardContactBox}>
-          {card.agent.email && (
-            <Text style={[styles.agentCardContactText, { color: colors.text }]}>
-              ✉️  {card.agent.email}
-            </Text>
-          )}
-          {card.agent.phone && (
-            <Text style={[styles.agentCardContactText, { color: colors.text }]}>
-              📞  {card.agent.phone}
-            </Text>
-          )}
-          {card.assignedByName && (
-            <Text style={[styles.agentCardAssignedBy, { color: colors.placeholder }]}>
-              Assigned by {card.assignedByName}
-            </Text>
-          )}
-        </View>
+        <AgentCardContactBox
+          card={card}
+          textColor={colors.text}
+          placeholderColor={colors.placeholder}
+        />
 
-        <View style={styles.agentCardBtnRow}>
-          <Pressable
-            onPress={() => router.push(`/agent/${card.agent.userId}` as Href)}
-            style={({ pressed }) => [
-              styles.agentCardBtn,
-              {
-                flex: onReportAgent ? 1 : undefined,
-                borderColor: isDark ? '#3f3f46' : colors.border,
-                opacity: pressed ? 0.9 : 1,
-                transform: [{ scale: pressed ? 0.98 : 1 }],
-              },
-            ]}
-          >
-            <Text style={[styles.agentCardBtnText, { color: colors.text }]}>View Profile</Text>
-          </Pressable>
+        {/* Action Buttons: View Profile & Report (flag-outline) */}
+        <AgentCardActionButtons
+          card={card}
+          borderColor={colors.border}
+          textColor={colors.text}
+          isDark={isDark}
+          onReportAgent={onReportAgent}
+        />
 
-          {onReportAgent && (
-            <Pressable
-              onPress={() => onReportAgent(card)}
-              style={({ pressed }) => [
-                styles.agentCardReportBtn,
-                {
-                  borderColor: isDark ? '#3d1624' : '#fecaca',
-                  backgroundColor: isDark ? '#261219' : '#fff5f5',
-                  opacity: pressed ? 0.85 : 1,
-                  transform: [{ scale: pressed ? 0.98 : 1 }],
-                },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Report agent"
-            >
-              <Ionicons name="flag-outline" size={13} color="#ef4444" style={{ marginRight: 4 }} />
-              <Text style={styles.agentCardReportBtnText}>Report</Text>
-            </Pressable>
-          )}
-        </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 3 }}>
-          {isStarred && (
-            <Ionicons name="star" size={11} color="#f59e0b" />
-          )}
+        <View style={styles.timeRow}>
+          {isStarred && <Ionicons name="star" size={11} color="#f59e0b" />}
           <Text style={[styles.agentCardTime, { color: colors.placeholder }]}>
             {formatMsgTime(message.sentAt)}
           </Text>
@@ -169,110 +78,3 @@ export default function AgentCardBubble({ card, message, isStarred = false, onRe
     </Animated.View>
   );
 }
-
-const styles = StyleSheet.create({
-  agentCardOuter: {
-    width: '100%',
-    alignItems: 'center',
-    marginVertical: 10,
-    paddingHorizontal: 16,
-  },
-  agentCardContainer: {
-    width: '100%',
-    maxWidth: 450,
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
-  },
-  agentCardAction: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-  },
-  agentCardName: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginTop: 10,
-    fontFamily: Typography.fontFamily,
-  },
-  agentCardSubtitle: {
-    fontSize: 13,
-    marginTop: 2,
-    fontFamily: Typography.fontFamily,
-  },
-  agentCardDescription: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 12,
-    fontFamily: Typography.fontFamily,
-  },
-  agentCardContactBox: {
-    marginTop: 16,
-    gap: 6,
-  },
-  agentCardContactText: {
-    fontSize: 13,
-    fontFamily: Typography.fontFamily,
-  },
-  agentCardAssignedBy: {
-    fontSize: 12,
-    marginTop: 2,
-    fontFamily: Typography.fontFamily,
-  },
-  agentCardBtnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 16,
-  },
-  agentCardBtn: {
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    paddingHorizontal: 16,
-  },
-  agentCardBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  agentCardReportBtn: {
-    height: 40,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  agentCardReportBtnText: {
-    color: '#ef4444',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  agentCardTime: {
-    fontSize: 10,
-    marginTop: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-});
