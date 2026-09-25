@@ -7,9 +7,16 @@ ios/
 # Dependencies
 node_modules/
 
-# Environment files
+# Environment files (Strictly Protected)
+.env
+.env*
 .env.local
 .env.*.local
+.env.development
+.env.test
+.env.production
+*.env
+!.env.example
 
 # Build outputs
 dist/
